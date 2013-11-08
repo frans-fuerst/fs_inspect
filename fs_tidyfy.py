@@ -1,34 +1,33 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os
-from optparse import OptionParser
-import logging
+"""add docstring"""
 
+import os
+import logging
 import hashlib
 from functools import partial
 
 def sha1_chunked(filename, chunksize=2**15, bufsize=-1):
+    """add docstring"""
     # http://stackoverflow.com/questions/4949162/max-limit-of-bytes-in-method-update-of-hashlib-python-module
     sha1_hash = hashlib.sha1()
-    with open(filename, 'rb', bufsize) as f:
-        for chunk in iter(partial(f.read, chunksize), ''):
+    with open(filename, 'rb', bufsize) as _file:
+        for chunk in iter(partial(_file.read, chunksize), ''):
             sha1_hash.update(chunk)
     return sha1_hash
 
-def sha1_unchunked(filename, chunksize=2**15, bufsize=-1):
-    return hashlib.sha1(open(filename, 'rb').read())
-
 class FileInfo:
+    """add docstring"""
     def __init__(self, name, path):
         self.name = name
         self.path = path
         
     def get_hash(self):
+        """add docstring"""
         try:
-            _hash1 = sha1_chunked(
-                os.path.join(self.path, self.name)
-                ).hexdigest()
+            _fullname = os.path.join(self.path, self.name)
+            _hash1 = sha1_chunked(_fullname).hexdigest()
             
         except MemoryError, ex:
             logging.error( "error, trying to get hash for file '%s' (%d Mb)",
@@ -39,13 +38,15 @@ class FileInfo:
         return _hash1
         
 class FileY:
-    
+    """add docstring"""
+
     def __init__(self, file_info, initial_state=0):
-        self.state = initial_state # 0 = not taken, 1 = filesize taken, 2 = hash taken (ident)
+        self.state = initial_state
         self.file_info = file_info
         self.files = None
         
     def add(self, new_file_info):
+        """add docstring"""
         if self.state == 0:
             # if this is the first collision then first promote this FileY
             # to a 'folder' for equally sized files
@@ -75,14 +76,16 @@ class FileY:
             
 
 class FsDb:
+    """add docstring"""
 
     def __init__(self, import_export_file = None):
         self._ie_file = import_export_file
         self._files = {}
 
     def register(self, path):
+        """add docstring"""
         _totalsize = 0
-        for (path, dirs, files) in os.walk(os.path.abspath(path)):
+        for (path, _, files) in os.walk(os.path.abspath(path)):
             for fname in files:
                 _fullname = os.path.join(path, fname)
                 if os.path.islink(_fullname):
@@ -111,8 +114,10 @@ class FsDb:
         return _totalsize
 
 def test():
+    """add docstring"""
     fsdb = FsDb("fstdb.txt")
     fsdb.register("./example_fs")
 
 if __name__ == "__main__":
     test()
+    
