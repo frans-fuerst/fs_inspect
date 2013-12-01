@@ -34,17 +34,19 @@ def main():
         for directory in args[1:]:
             logging.info( "%d Mb", (fsdb.register(directory) / 2 ** 20) )
 
+        fsdb.print_statistics()
+
 if __name__ == "__main__":
     logging.basicConfig(
         format='%(asctime)s %(levelname)s [%(name)s] %(message)s',
         datefmt="%y%m%d-%H%M%S")
     logging.getLogger().setLevel(logging.DEBUG)
-    
+
     logging.addLevelName( logging.CRITICAL, '(CRITICAL)' )
     logging.addLevelName( logging.ERROR,    '(EE)' )
     logging.addLevelName( logging.WARNING,  '(WW)' )
     logging.addLevelName( logging.INFO,     '(II)' )
     logging.addLevelName( logging.DEBUG,    '(DD)' )
     logging.addLevelName( logging.NOTSET,   '(NA)' )
-    
+
     main()
