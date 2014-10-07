@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """please add docstring"""
@@ -15,7 +15,7 @@ def sha1_chunked(filename, chunksize=2**15, bufsize=-1):
     # http://stackoverflow.com/questions/4949162/max-limit-of-bytes-in-method-update-of-hashlib-python-module
     sha1_hash = hashlib.sha1()
     with open(filename, 'rb', bufsize) as _file:
-        for chunk in iter(partial(_file.read, chunksize), ''):
+        for chunk in iter(partial(_file.read, chunksize), b''):
             sha1_hash.update(chunk)
     return sha1_hash
 
@@ -26,7 +26,10 @@ class FileInfo:
         self.path = path
 
     def __str__(self):
-        return "f"
+        return os.path.join(self.path, self.name)
+    
+    def __repr__(self):
+        return str(self)
 
     def get_hash(self):
         """add docstring"""
@@ -34,7 +37,7 @@ class FileInfo:
             _fullname = os.path.join(self.path, self.name)
             _hash1 = sha1_chunked(_fullname).hexdigest()
 
-        except MemoryError, ex:
+        except MemoryError as ex:
             logging.error( "error, trying to get hash for file '%s' (%d Mb)",
                            _fullname,
                            os.path.getsize(_fullname) / 2 **20 )
@@ -98,7 +101,7 @@ class FileY:
 
 class FsDb:
     """a FsDb instance holds all information about files and directories
-       which have been imported and acts can answer questions about them
+       which have been imported and can answer questions about them
     """
 
     def __init__(self, import_export_file = None):
@@ -107,12 +110,10 @@ class FsDb:
         self._directories = {}
 
     def __eq__(self, other):
-        print other._files == self._files
-        print other._directories == self._directories
-        if( other._files == self._files and
-            other._directories == self._directories):
-            return True
-        return False
+        # print("__eq__: files equal: %s" % other._files == self._files)
+        # print("__eq__: files dirs:  %s" % other._directories == self._directories)
+        return (other._files == self._files and
+                other._directories == self._directories)
 
     def to_JSON(self):
         return json.dumps(
@@ -134,24 +135,27 @@ class FsDb:
             sim_f = self._files[f].get_similar_files()
             if len(sim_f) == 0:
                 continue
-            pprint.pprint( self._files[f].get_similar_files())
+            pprint.pprint(sim_f)
 
     def register(self, path):
         """takes a path to investigate and traverses it to
            index all contained files
            """
         _totalsize = 0
-        for (path, _, files) in os.walk(os.path.abspath(path)):
+        _path = os.path.abspath(path)
+        logging.debug(_path)
+        for (path, _, files) in os.walk(_path):
             for fname in files:
                 _fullname = os.path.join(path, fname)
                 if os.path.islink(_fullname):
+                    logging.debug("skipping link %s" % _fullname)
                     continue
 
                 _file_info = FileInfo(fname, path)
 
                 _filesize = os.path.getsize(_fullname)
 
-                logging.debug( "%s", _fullname )
+                logging.debug( "handle: %s", _fullname )
 
                 if not _filesize in self._files:
                     # simple case: file size does not exist yet, so just
@@ -194,7 +198,7 @@ def test():
     fsdb2 = FsDb("fstdb.txt")
     fsdb2.import_from_fs()
 
-    print "test1 (equality after loading):", fsdb1==fsdb2
+    print("test1 (equality after loading): %s" % fsdb1==fsdb2)
 
 if __name__ == "__main__":
     test()

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """add docstring"""
@@ -17,8 +17,13 @@ def main():
     parser.add_option("-s", "--server", dest="server_host",
                       default="http://127.0.0.1", metavar="host-address",
                       help="server IP/address")
-
+    parser.add_option("-v", "--verbose", dest="verbose",
+                      action="store_true", default = False,
+                      help = "be more verbose")
     (options, args) = parser.parse_args()
+    
+    if options.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     if len(args) == 0:
         parser.error("no command given")
@@ -26,7 +31,7 @@ def main():
     if args[0] == 'help':
         pass
 
-    if args[0] == 'register':
+    if args[0] in  ('a', 'add'):
         if len(args) < 2:
             parser.error("no directory to add given")
 
@@ -36,11 +41,15 @@ def main():
 
         fsdb.print_statistics()
 
+    if args[0] in  ('up', 'update'):
+        print("not yet implemented")
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         format='%(asctime)s %(levelname)s [%(name)s] %(message)s',
         datefmt="%y%m%d-%H%M%S")
-    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.INFO)
 
     logging.addLevelName( logging.CRITICAL, '(CRITICAL)' )
     logging.addLevelName( logging.ERROR,    '(EE)' )
