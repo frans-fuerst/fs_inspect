@@ -3,7 +3,7 @@
 
 """add docstring"""
 
-from fs_tidyfy import FsDb
+from fs_tidify import FsDb
 import logging
 from optparse import OptionParser
 
