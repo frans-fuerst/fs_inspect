@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""please add docstring"""
+''' this is the fs_tidify core module. import and operate on FsDb
+'''
 
 import os
 import logging
@@ -184,11 +185,13 @@ class FsDb:
 
 
 def test():
-    """add docstring"""
+    ''' make an overall smoke test and explain a typical workflow 
+    '''
+    
     fsdb1 = FsDb("fstdb.txt")
-
+    test_directory = os.path.join(os.path.dirname(__file__), 'example_fs')
     # import information about a directory
-    fsdb1.register("./example_fs")
+    fsdb1.register(test_directory)
     fsdb1.print_statistics()
 
     # persist imported information to fs
@@ -198,7 +201,8 @@ def test():
     fsdb2 = FsDb("fstdb.txt")
     fsdb2.import_from_fs()
 
-    print("test1 (equality after loading): %s" % fsdb1==fsdb2)
+    assert fsdb1 == fsdb2, "equality after loading"
 
 if __name__ == "__main__":
     test()
+
