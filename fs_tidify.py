@@ -201,6 +201,12 @@ def test():
     fsdb2 = FsDb("fstdb.txt")
     fsdb2.import_from_fs()
 
+    if not fsdb1 == fsdb2:
+        print('--')
+        fsdb1.print_statistics()
+        print('--')
+        fsdb2.print_statistics()
+        print('--')
     assert fsdb1 == fsdb2, "equality after loading"
 
 if __name__ == "__main__":
