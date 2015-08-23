@@ -31,9 +31,18 @@ def enum(*sequential, **named):
 class file_info:
     """add docstring"""
     def __init__(self, name, path):
+        if isinstance(name, (str, bytes)):
+            name = name.decode()
+        if isinstance(path, (str, bytes)):
+            path = path.decode()
         self.name = name
         self.path = path
 
+    def __eq__(self, other):
+        _n_eq = other.name == self.name
+        _p_eq = other.path == self.path
+        return _n_eq and _p_eq
+    
     def __str__(self):
         return os.path.join(self.path, self.name)
 
@@ -75,14 +84,20 @@ class file_y:
         self._file = file_info  # used with state == SIZE
         self._hashes = None     # used with state == HASH
 
-    @classmethod
-    def from_dict(cls, input_dict):
-        new_object = cls(None)
-        new_object.__dict__.update(input_dict)
-        return new_object
-
-    def to_JSON(self):
-        return None
+    def __eq__(self, other):
+        _s_eq = other._state == self._state
+        _f_eq = other._file == self._file
+        _h_eq = other._hashes == self._hashes
+        if not _s_eq:
+            print('file_y: state differ')
+        if not _f_eq:
+            print('file_y: file_info differs')
+        if not _h_eq:
+            print('file_y: hashed files differ')
+            print(other._hashes)
+            print(self._hashes)
+        return (_s_eq and _f_eq and _h_eq)
+    
 
     def add(self, new_file_info):
         ''' accept new file to register and reorganize tree
@@ -120,7 +135,7 @@ class json_encoder(json.JSONEncoder):
         if isinstance(obj, file_info):
             return obj.__dict__
         if isinstance(obj, file_y):
-            return {'state': 'STATE', 'file': obj._file, 'hashes': obj._hashes}
+            return {'state': obj._state, 'file': obj._file, 'hashes': obj._hashes}
 
         return json.JSONEncoder.default(self, obj)
 
@@ -132,17 +147,14 @@ class json_decoder(json.JSONDecoder):
                              *args, **kargs)
 
     def dict_to_object(self, d):
-        if '__type__' not in d:
-            return d
-
-        type = d.pop('__type__')
-        try:
-            dateobj = datetime(**d)
-            return dateobj
-        except:
-            d['__type__'] = type
-            return d
-
+        if 'name' in d and 'path' in d:
+            return file_info(**d)
+        if 'state' in d:
+            r = file_y(d['file'], d['state'])
+            r._hashes = {k.encode(): v for k, v in d['hashes'].items()}
+            #r._hashes = d['hashes']
+            return r
+        return d
 
 
 class fs_db:
@@ -158,8 +170,18 @@ class fs_db:
     def __eq__(self, other):
         # print("__eq__: files equal: %s" % other._files == self._files)
         # print("__eq__: files dirs:  %s" % other._directories == self._directories)
-        return (other._files == self._files and
-                other._directories == self._directories)
+        _f_eq = other._files == self._files
+        _d_eq = other._directories == self._directories
+        if not _f_eq:
+            print('fs_db: files differ')
+            print(other._files.keys() == self._files.keys())
+            print(other._files.keys())
+            print(self._files.keys())
+            
+            print(other._files.values() == self._files.values())
+        if not _d_eq:
+            print('fs_db: directories differ')
+        return (_f_eq and _d_eq)
 
     def to_JSON(self):
         return json.dumps(
@@ -173,9 +195,7 @@ class fs_db:
     def from_JSON(self, json_data):
         imported_data = json.loads(json_data, cls=json_decoder)
         self._directories = imported_data['directories']
-
-        for size, file_y in imported_data['files'].iteritems():
-            self._files[size] = file_y.from_dict(file_y)
+        self._files = {int(k): v for k, v in imported_data['files'].items()}
 
     def print_statistics(self):
         for f in self._files:
@@ -253,6 +273,7 @@ def test():
         print('--')
         fsdb2.print_statistics()
         print('--')
+        
     assert fsdb1 == fsdb2, "equality after loading"
 
 
