@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""add docstring"""
+''' this is the fs_tidify command line client 
 
-from fs_tidify import FsDb
+    possible commands:
+    fst add <dir>            # registeres a folder
+    fst update <dir>         # registeres a folder
+    fst diff <dir1> <dir2>   # prints files which are only in dir1 or in dir2
+    fst uniques <dir1>       # prints files which are not in any other registered folder
+    fst show-copies <path>   # 
+    
+    [ ] support .fst-ignore files
+    [ ] recognize moved files / directories
+    [ ] refactor to client/server mode for speed
+'''
+
+from fs_tidify import fs_db
 import logging
 from optparse import OptionParser
 
@@ -35,15 +47,19 @@ def main():
         if len(args) < 2:
             parser.error("no directory to add given")
 
-        fsdb = FsDb()
+        fsdb = fs_db('fst.json')
         for directory in args[1:]:
             logging.info( "%d Mb", (fsdb.register(directory) / 2 ** 20) )
 
         fsdb.print_statistics()
 
-    if args[0] in  ('up', 'update'):
+    if args[0] in ('up', 'update'):
         print("not yet implemented")
-
+        
+    if args[0] in ('show-copies'):
+        fsdb = fs_db('fst.json')
+        fsdb.import_from_fs()
+        fsdb.print_statistics()
 
 if __name__ == "__main__":
     logging.basicConfig(
