@@ -27,16 +27,20 @@ def enum(*sequential, **named):
     enums = dict(zip(sequential, range(len(sequential))), **named)
     return type('Enum', (), enums)
 
-
+def to_unicode(string):
+    if isinstance(string, str):
+        return string
+    if isinstance(string, bytes):
+        return string.decode()
+    if isinstance(string, unicode):
+        return str(string)
+    assert False, "input not str or bytes (but %s)" % type(string)
+    
 class file_info:
     """add docstring"""
     def __init__(self, name, path):
-        if isinstance(name, (str, bytes)):
-            name = name.decode()
-        if isinstance(path, (str, bytes)):
-            path = path.decode()
-        self.name = name
-        self.path = path
+        self.name = to_unicode(name)
+        self.path = to_unicode(path)
 
     def __eq__(self, other):
         _n_eq = other.name == self.name
@@ -151,8 +155,8 @@ class json_decoder(json.JSONDecoder):
             return file_info(**d)
         if 'state' in d:
             r = file_y(d['file'], d['state'])
-            r._hashes = {k.encode(): v for k, v in d['hashes'].items()}
-            #r._hashes = d['hashes']
+            if 'hashes' in d and d['hashes'] is not None:
+                r._hashes = {k.encode(): v for k, v in d['hashes'].items()}
             return r
         return d
 
@@ -250,7 +254,7 @@ class fs_db:
         self.from_JSON(open(self._ie_file).read())
 
 
-def test():
+def test_smoketest():
     ''' make an overall smoke test and explain a typical workflow
     '''
 
@@ -276,8 +280,7 @@ def test():
         
     assert fsdb1 == fsdb2, "equality after loading"
 
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    test()
+    test_smoketest()
 
