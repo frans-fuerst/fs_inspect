@@ -39,11 +39,12 @@ def main():
 
     if len(args) == 0:
         parser.error("no command given")
+        return -1
 
-    if args[0] == 'help':
-        pass
+    elif args[0] == 'help':
+        return 0
 
-    if args[0] in  ('a', 'add'):
+    elif args[0] in  ('a', 'add'):
         if len(args) < 2:
             parser.error("no directory to add given")
 
@@ -53,10 +54,10 @@ def main():
 
         fsdb.print_statistics()
 
-    if args[0] in ('up', 'update'):
+    elif args[0] in ('up', 'update'):
         print("not yet implemented")
         
-    if args[0] in ('show-copies'):
+    elif args[0] in ('show-copies'):
         fsdb = fs_db('fst.json')
         fsdb.import_from_fs()
         fsdb.print_statistics()

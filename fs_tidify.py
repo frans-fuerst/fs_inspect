@@ -102,7 +102,14 @@ class file_y:
             print(self._hashes)
         return (_s_eq and _f_eq and _h_eq)
     
-
+    def get_count(self):
+        if self._state is file_y.states.SIZE:
+            return 1
+        _count = 0
+        for _, v in self._hashes.items():
+            _count += len(v)
+        return _count
+    
     def add(self, new_file_info):
         ''' accept new file to register and reorganize tree
         '''
@@ -201,12 +208,19 @@ class fs_db:
         self._directories = imported_data['directories']
         self._files = {int(k): v for k, v in imported_data['files'].items()}
 
+    def get_count(self):
+        count = 0
+        for f in self._files:
+            count += self._files[f].get_count()
+        return count
+    
     def print_statistics(self):
         for f in self._files:
             sim_f = self._files[f].get_similar_files()
             if len(sim_f) == 0:
                 continue
             pprint.pprint(sim_f)
+        print("%d files in total " % self.get_count())
 
     def register(self, path):
         ''' takes a path to investigate and traverses it to
@@ -261,7 +275,9 @@ def test_smoketest():
     fsdb1 = fs_db("fstdb.txt")
     test_directory = os.path.join(os.path.dirname(__file__), 'example_fs')
     # import information about a directory
+    assert fsdb1.get_count() == 0
     fsdb1.register(test_directory)
+    assert fsdb1.get_count() == 5
     fsdb1.print_statistics()
 
     # persist imported information to fs
