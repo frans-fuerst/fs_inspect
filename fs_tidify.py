@@ -163,7 +163,7 @@ class json_decoder(json.JSONDecoder):
         if 'state' in d:
             r = file_y(d['file'], d['state'])
             if 'hashes' in d and d['hashes'] is not None:
-                r._hashes = {k.encode(): v for k, v in d['hashes'].items()}
+                r._hashes = {k: v for k, v in d['hashes'].items()}
             return r
         return d
 
