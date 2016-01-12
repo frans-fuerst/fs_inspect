@@ -1,0 +1,21 @@
+2016.01.12 - bb0d6257a4dbe48f52628ba9360b59fac3a3014c @ heizluefter
+
+$ time fs_inspect/fsi.py ~
+317743
+real	0m59.393s
+user	0m21.978s
+sys	0m14.821s
+
+$ time fs_inspect/fsi.py ~
+317743
+real	0m22.716s
+user	0m16.933s
+sys	0m5.798s
+
+$ time find /home/frans/.fsi/objects/ | wc
+  57898   57898 2046507
+real	0m0.424s
+user	0m0.176s
+sys	0m0.310s
+
+
