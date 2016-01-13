@@ -6,6 +6,7 @@ import sys
 import math
 import logging
 import time
+import json
 
 
 class indexer:
@@ -31,11 +32,27 @@ class indexer:
 
         def __getitem__(self, index):
             return self._idx_to_word[index]
+        
+        def save(self, filename):
+            json.dump(self._word_to_idx, open(filename, 'w'))
 
+        def load(self, filename):
+            _idx2word = {}
+            _word2idx = json.load(open(filename))
+            for word, idx in _word2idx.items():
+                _idx2word[idx] = word
+            self._idx_to_word, self._word_to_idx, self._size = (
+                _idx2word, _word2idx, len(_idx2word))
+
+        def __eq__(self, other):
+            return (self._size == other._size and
+                    self._idx_to_word == other._idx_to_word and
+                    self._word_to_idx == other._word_to_idx)
+            
     def __init__(self):
         # expensive - do it only once
         self._file_dir = os.path.expanduser('~/.fsi/files')
-        self._name_dir = os.path.expanduser('~/.fsi/name')
+        self._name_file = os.path.expanduser('~/.fsi/name_parts.txt')
         self._name_component_store = indexer.name_component_store()
 
     def _get_name_components(self, path):
@@ -47,6 +64,12 @@ class indexer:
         return '/' + '/'.join((self._name_component_store[i]
                          for i in (int(c) for c in packed_path.split('/'))))
 
+    def _store_single_file(self, size_path, name, mod_time):
+        with open(os.path.join(size_path, 'single.txt'), 'w') as _f:
+            _f.write(name)
+            _f.write(" ")
+            _f.write(str(mod_time))
+            
     def get_path(self, size):
         _result = os.path.join(
             self._file_dir,
@@ -69,12 +92,11 @@ class indexer:
             _dirs[:] = [d for d in _dirs if d not in ('.git', '.svn', '__pycache__')]
 
             _dir = os.path.abspath(_dir)
-
             for fname in files:
                 _fullname = os.path.join(_dir, fname)
                 assert _fullname[0] == '/'
                 if os.path.islink(_fullname):
-                    logging.debug("skipping link %s" % _fullname)
+                    #logging.debug("skipping link %s" % _fullname)
                     continue
                 _file_count += 1
 
@@ -92,11 +114,12 @@ class indexer:
 
                 _packed_name = self._get_name_components(_fullname)
                 assert (self._restore_name(_packed_name) == _fullname)
-#                logging.debug("%s => %s", _fullname, _packed_name)
-
+                # logging.debug("%s => %s", _fullname, _packed_name)
+                # print(_packed_name, _time)
                 if _state == 0:
                     # file size not registered
                     # create a file with file name and modification date
+                    self._store_single_file(_size_path, _packed_name, _time)
                     pass
                 elif _state == 1:
                     # single file registered
@@ -106,8 +129,15 @@ class indexer:
                     pass
 
         print(_file_count)
-
-
+        t = time.time()
+        self._name_component_store.save(self._name_file)
+        print("save: ", time.time() - t)
+        _test_store = indexer.name_component_store()
+        t = time.time()
+        _test_store.load(self._name_file)
+        print("load: ", time.time() - t)
+        assert _test_store == self._name_component_store
+        
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     p = indexer()
