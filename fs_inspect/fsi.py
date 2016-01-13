@@ -6,7 +6,26 @@ import sys
 import math
 import logging
 import time
+import timeit
 import json
+import hashlib
+import functools
+import subprocess
+
+def sha1_external(filename):
+    ''' fast with large files '''
+    output = subprocess.Popen(["sha1sum", filename], stdout=subprocess.PIPE).communicate()[0].decode()
+    return output.split(' ')[0]
+
+def sha1_internal(filename, chunksize=2**15, bufsize=-1):
+    ''' fast with small files '''
+    # max-limit-of-bytes-in-method-update-of-hashlib-python-module
+    # http://stackoverflow.com/questions/4949162
+    sha1_hash = hashlib.sha1()
+    with open(filename, 'rb', bufsize) as _file:
+        for chunk in iter(functools.partial(_file.read, chunksize), b''):
+            sha1_hash.update(chunk)
+    return sha1_hash.hexdigest()
 
 
 class indexer:
@@ -55,6 +74,20 @@ class indexer:
         self._name_file = os.path.expanduser('~/.fsi/name_parts.txt')
         self._name_component_store = indexer.name_component_store()
 
+    def __enter__(self):
+        self._name_component_store.load(self._name_file)
+        return self
+
+    def __exit__(self, data_type, value, tb):
+        t = time.time()
+        self._name_component_store.save(self._name_file)
+        logging.debug("save: %.2fs", time.time() - t)
+        _test_store = indexer.name_component_store()
+        t = time.time()
+        _test_store.load(self._name_file)
+        logging.debug("load: %.4fs", time.time() - t)
+        assert _test_store == self._name_component_store
+
     def _get_name_components(self, path):
         #assert: '/{}'" not in path
         return '/'.join((str(self._name_component_store.get_index(n))
@@ -87,7 +120,8 @@ class indexer:
     def add(self, path):
         _file_count = 0
         _perf_measure_t = time.time()
-
+        _total_size = 0
+        
         for (_dir, _dirs, files) in os.walk(path, topdown=True):
             _dirs[:] = [d for d in _dirs if d not in ('.git', '.svn', '__pycache__')]
 
@@ -95,10 +129,18 @@ class indexer:
             for fname in files:
                 _fullname = os.path.join(_dir, fname)
                 assert _fullname[0] == '/'
-                if os.path.islink(_fullname):
+                if not os.path.isfile(_fullname):
                     #logging.debug("skipping link %s" % _fullname)
                     continue
+                try:
+                    _filesize = os.path.getsize(_fullname)
+                    _time = int(os.path.getmtime(_fullname) * 100)
+                except:
+                    logging.warn('permission denied: "%s"', _fullname)
+                    continue
+
                 _file_count += 1
+                _total_size += _filesize
 
                 if _file_count % 1000 == 0:
                     _t = time.time()
@@ -108,14 +150,21 @@ class indexer:
                         len(self._name_component_store) / 2)
                     _perf_measure_t = _t
 
-                _filesize = os.path.getsize(_fullname)
-                _time = int(os.path.getmtime(_fullname) * 100)
                 _size_path, _state = self.get_path(_filesize)
 
                 _packed_name = self._get_name_components(_fullname)
                 assert (self._restore_name(_packed_name) == _fullname)
                 # logging.debug("%s => %s", _fullname, _packed_name)
                 # print(_packed_name, _time)
+                _t = time.time()
+                if _filesize < 60000:
+                    _hash = sha1_internal(_fullname)
+                else:
+                    _hash = sha1_external(_fullname)
+                _t = time.time() - _t
+                    
+                logging.debug("%s, %d, %s, %d", fname, _filesize, _hash, _t * 1000)
+    
                 if _state == 0:
                     # file size not registered
                     # create a file with file name and modification date
@@ -128,20 +177,13 @@ class indexer:
                     # more than one files already registered
                     pass
 
-        print(_file_count)
-        t = time.time()
-        self._name_component_store.save(self._name_file)
-        print("save: ", time.time() - t)
-        _test_store = indexer.name_component_store()
-        t = time.time()
-        _test_store.load(self._name_file)
-        print("load: ", time.time() - t)
-        assert _test_store == self._name_component_store
-        
+        print(_file_count, 'frame: {0:,} bytes'.format(_total_size))
+
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-    p = indexer()
-    p.add(sys.argv[1])
+    with indexer() as p:
+        p.add(sys.argv[1])
 
 
 '''
