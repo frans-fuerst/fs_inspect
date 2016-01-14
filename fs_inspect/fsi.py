@@ -15,6 +15,7 @@ import subprocess
 def sha1_external(filename):
     ''' fast with large files '''
     output = subprocess.Popen(["sha1sum", filename], stdout=subprocess.PIPE).communicate()[0].decode()
+    # todo: check plausibility (length, "permission denied", etc)
     return output.split(' ')[0]
 
 def sha1_internal(filename, chunksize=2**15, bufsize=-1):
@@ -51,7 +52,7 @@ class indexer:
 
         def __getitem__(self, index):
             return self._idx_to_word[index]
-        
+
         def save(self, filename):
             json.dump(self._word_to_idx, open(filename, 'w'))
 
@@ -71,7 +72,7 @@ class indexer:
             return (self._size == other._size and
                     self._idx_to_word == other._idx_to_word and
                     self._word_to_idx == other._word_to_idx)
-            
+
     def __init__(self):
         # expensive - do it only once
         self._file_dir = os.path.expanduser('~/.fsi/files')
@@ -101,7 +102,7 @@ class indexer:
                              for n in path[1:].split('/')))
 
     def _restore_name(self, packed_path):
-        ''' opposite of _get_name_components(): restores the original path 
+        ''' opposite of _get_name_components(): restores the original path
             on the filesystem '''
         return '/' + '/'.join((self._name_component_store[i]
                          for i in (int(c) for c in packed_path.split('/'))))
@@ -112,10 +113,10 @@ class indexer:
             _f.write(name)
             _f.write(" ")
             _f.write(str(mod_time))
-            
-    def get_path(self, size):
+
+    def _get_size_path(self, size):
         ''' returns a tuple with a path representing the file's size and the
-            status of the path. 
+            status of the path.
             Creates it if not existent. status is 0 for path did not exist yet,
             1 for path exists with a 'dirinfo' and 1 for path exists with
             several file information.
@@ -138,31 +139,79 @@ class indexer:
                 raise
                 # todo: assert existing hash files
 
+    def _add_file(self, filename):
+        _filesize = os.path.getsize(filename)
+        try:
+            _filesize = os.path.getsize(filename)
+            _time = int(os.path.getmtime(filename) * 100)
+        except:
+            logging.warn('permission denied: "%s"', filename)
+            raise
+
+        _size_path, _state = self._get_size_path(_filesize)
+
+        _packed_name = self._get_name_components(filename)
+        assert (self._restore_name(_packed_name) == filename)
+        # logging.debug("%s => %s", filename, _packed_name)
+        # print(_packed_name, _time)
+
+        try:
+            _t = time.time()
+            if _filesize < 60000:
+                _hash = sha1_internal(filename)
+            else:
+                _hash = sha1_external(filename)
+            _t = time.time() - _t
+
+            if _filesize >= 10 ** 6:
+                logging.debug("#=%s, %s bytes, %.1fms, %.2fMb/ms, /%s/%s",
+                              _hash, '{0:,}'.format(_filesize),  _t * 1000,
+                              _filesize / (2 << 20) / (_t  * 1000) ,
+                              _packed_name, os.path.basename(filename))
+        except PermissionError:
+            logging.warn('cannot create checksum (permission denied): "%s"',
+                         filename)
+            raise
+
+        # === no state changing operations before
+        # === red exception safety line ===============================
+        # === no exceptions after
+
+        if not _state:
+            # file size not registered
+            # create a file with file name and modification date
+            self._store_single_file(_size_path, _packed_name, _time)
+            pass
+        else:
+            # meta info exists
+            pass
+
+        return _filesize
+
     def add(self, path):
         _file_count = 0
         _perf_measure_t = time.time()
         _total_size = 0
-        
+        _ignore_pattern = ('.git', '.svn', '__pycache__')
+
         for (_dir, _dirs, files) in os.walk(path, topdown=True):
-            _dirs[:] = [d for d in _dirs if d not in ('.git', '.svn', '__pycache__')]
+            _dirs[:] = [d for d in _dirs if d not in _ignore_pattern]
 
             _dir = os.path.abspath(_dir)
             for fname in files:
                 _fullname = os.path.join(_dir, fname)
+
                 assert _fullname[0] == '/'
-                if not os.path.isfile(_fullname):
-                    #logging.debug("skipping link %s" % _fullname)
+
+                if os.path.islink(_fullname):
+                    #logging.debug("skip link %s" % _fullname)
                     continue
-                assert not os.path.islink(_fullname)
-                try:
-                    _filesize = os.path.getsize(_fullname)
-                    _time = int(os.path.getmtime(_fullname) * 100)
-                except:
-                    logging.warn('permission denied: "%s"', _fullname)
+                if not os.path.isfile(_fullname):
+                    logging.debug("skip special %s" % _fullname)
                     continue
 
+                _total_size += self._add_file(_fullname)
                 _file_count += 1
-                _total_size += _filesize
 
                 if _file_count % 1000 == 0:
                     _t = time.time()
@@ -172,31 +221,9 @@ class indexer:
                         len(self._name_component_store) / 2)
                     _perf_measure_t = _t
 
-                _size_path, _state = self.get_path(_filesize)
 
-                _packed_name = self._get_name_components(_fullname)
-                assert (self._restore_name(_packed_name) == _fullname)
-                # logging.debug("%s => %s", _fullname, _packed_name)
-                # print(_packed_name, _time)
-                _t = time.time()
-                if _filesize < 60000:
-                    _hash = sha1_internal(_fullname)
-                else:
-                    _hash = sha1_external(_fullname)
-                _t = time.time() - _t
-                    
-                logging.debug("%s, %d, %s, %d", fname, _filesize, _hash, _t * 1000)
-    
-                if not _state:
-                    # file size not registered
-                    # create a file with file name and modification date
-                    self._store_single_file(_size_path, _packed_name, _time)
-                    pass
-                else:
-                    # meta info exists
-                    pass
-
-        print(_file_count, 'frame: {0:,} bytes'.format(_total_size))
+        logging.info("added %d files with a total of %s bytes",
+                     _file_count, '{0:,}'.format(_total_size))
 
 
 if __name__ == '__main__':
