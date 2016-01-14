@@ -3,20 +3,20 @@
 
 import os
 import sys
-import math
 import logging
 import time
-import timeit
 import json
 import hashlib
 import functools
 import subprocess
+
 
 def sha1_external(filename):
     ''' fast with large files '''
     output = subprocess.Popen(["sha1sum", filename], stdout=subprocess.PIPE).communicate()[0].decode()
     # todo: check plausibility (length, "permission denied", etc)
     return output.split(' ')[0]
+
 
 def sha1_internal(filename, chunksize=2**15, bufsize=-1):
     ''' fast with small files '''
@@ -29,6 +29,13 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
     return sha1_hash.hexdigest()
 
 
+def fast_sha1(filename, size):
+    if size < 50000:
+        return sha1_internal(filename)
+    else:
+        return sha1_external(filename)
+
+        
 class indexer:
 
     class name_component_store:
@@ -97,7 +104,7 @@ class indexer:
     def _get_name_components(self, path):
         ''' turn "/home/user/some/directory" into index based string
             e.g. "2/7/4/9"'''
-        #assert: '/{}'" not in path
+        #todo: assert: '/{}'" not in path
         return '/'.join((str(self._name_component_store.get_index(n))
                              for n in path[1:].split('/')))
 
@@ -107,12 +114,11 @@ class indexer:
         return '/' + '/'.join((self._name_component_store[i]
                          for i in (int(c) for c in packed_path.split('/'))))
 
-    def _store_single_file(self, size_path, name, mod_time):
+    def _store_single_file(self, size_path, name):
         ''' write a file with meta information about a single file '''
         with open(os.path.join(size_path, 'dirinfo'), 'w') as _f:
+            _f.write("single ")
             _f.write(name)
-            _f.write(" ")
-            _f.write(str(mod_time))
 
     def _get_size_path(self, size):
         ''' returns a tuple with a path representing the file's size and the
@@ -121,9 +127,7 @@ class indexer:
             1 for path exists with a 'dirinfo' and 1 for path exists with
             several file information.
         '''
-        _result = os.path.join(
-            self._file_dir,
-            '/'.join('%d' % size))
+        _result = os.path.join(self._file_dir, '/'.join('%d' % size))
         try:
             os.makedirs(_result)
             return (_result, None)
@@ -140,7 +144,6 @@ class indexer:
                 # todo: assert existing hash files
 
     def _add_file(self, filename):
-        _filesize = os.path.getsize(filename)
         try:
             _filesize = os.path.getsize(filename)
             _time = int(os.path.getmtime(filename) * 100)
@@ -162,32 +165,57 @@ class indexer:
             else:
                 _hash = sha1_external(filename)
             _t = time.time() - _t
-
+    
             if _filesize >= 10 ** 6:
                 logging.debug("#=%s, %s bytes, %.1fms, %.2fMb/ms, /%s/%s",
                               _hash, '{0:,}'.format(_filesize),  _t * 1000,
                               _filesize / (2 << 20) / (_t  * 1000) ,
                               _packed_name, os.path.basename(filename))
-        except PermissionError:
-            logging.warn('cannot create checksum (permission denied): "%s"',
-                         filename)
+        except IOError as ex:
+            if ex.errno == 13:
+                logging.warn('cannot create checksum (permission denied): "%s"',
+                             filename)
             raise
 
         # === no state changing operations before
         # === red exception safety line ===============================
         # === no exceptions after
 
-        if not _state:
+        if _state is None:
             # file size not registered
             # create a file with file name and modification date
-            self._store_single_file(_size_path, _packed_name, _time)
-            pass
+            self._store_single_file(_size_path, _packed_name)
         else:
-            # meta info exists
-            pass
+            if _state[0] == 'single':
+                _path = _state[1]
+                if _packed_name != _path:
+                    # we found another file with the same file - we have
+                    # to turn this entry into a multi-entry
+                    print('collision')
+                    self._promote_to_multi(_size_path, _filesize, _path, _packed_name)
+                else:
+                    print('found myself')
+                    
+            elif _state[0] == 'multi':
+                assert False
+            else:
+                assert False
 
         return _filesize
-
+    
+    def _promote_to_multi(self, size_path, size, other_packed_name, new_packed_name):
+        ''' turn a single file entry into a multi file entry
+        '''
+        # todo raise if any hash cannot be computed
+        # todo raise if second file does not exist
+        other_file_name = self._restore_name(other_packed_name)
+        new_file_name = self._restore_name(new_packed_name)
+        
+        hash1 = fast_sha1(other_file_name, size)
+        hash2 = fast_sha1(new_file_name, size)
+        
+        assert False
+        
     def add(self, path):
         _file_count = 0
         _perf_measure_t = time.time()
@@ -209,8 +237,15 @@ class indexer:
                 if not os.path.isfile(_fullname):
                     logging.debug("skip special %s" % _fullname)
                     continue
-
-                _total_size += self._add_file(_fullname)
+                try:
+                    _total_size += self._add_file(_fullname)
+                except IOError as ex:
+                    if ex.errno == 13:
+                        # IOError 13 perm denied
+                        continue
+                    raise
+                except:
+                    raise
                 _file_count += 1
 
                 if _file_count % 1000 == 0:
@@ -228,6 +263,7 @@ class indexer:
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
+    logging.debug('.'.join((str(e) for e in sys.version_info)))
     with indexer() as p:
         p.add(sys.argv[1])
 
