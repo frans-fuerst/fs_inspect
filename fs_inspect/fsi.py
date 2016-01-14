@@ -57,7 +57,11 @@ class indexer:
 
         def load(self, filename):
             _idx2word = {}
-            _word2idx = json.load(open(filename))
+            try:
+                _word2idx = json.load(open(filename))
+            except:
+                # file does not exist - just exit
+                return
             for word, idx in _word2idx.items():
                 _idx2word[idx] = word
             self._idx_to_word, self._word_to_idx, self._size = (
@@ -79,6 +83,7 @@ class indexer:
         return self
 
     def __exit__(self, data_type, value, tb):
+        # store and load to debug structure for test purposes
         t = time.time()
         self._name_component_store.save(self._name_file)
         logging.debug("save: %.2fs", time.time() - t)
@@ -89,33 +94,49 @@ class indexer:
         assert _test_store == self._name_component_store
 
     def _get_name_components(self, path):
+        ''' turn "/home/user/some/directory" into index based string
+            e.g. "2/7/4/9"'''
         #assert: '/{}'" not in path
         return '/'.join((str(self._name_component_store.get_index(n))
                              for n in path[1:].split('/')))
 
     def _restore_name(self, packed_path):
+        ''' opposite of _get_name_components(): restores the original path 
+            on the filesystem '''
         return '/' + '/'.join((self._name_component_store[i]
                          for i in (int(c) for c in packed_path.split('/'))))
 
     def _store_single_file(self, size_path, name, mod_time):
-        with open(os.path.join(size_path, 'single.txt'), 'w') as _f:
+        ''' write a file with meta information about a single file '''
+        with open(os.path.join(size_path, 'dirinfo'), 'w') as _f:
             _f.write(name)
             _f.write(" ")
             _f.write(str(mod_time))
             
     def get_path(self, size):
+        ''' returns a tuple with a path representing the file's size and the
+            status of the path. 
+            Creates it if not existent. status is 0 for path did not exist yet,
+            1 for path exists with a 'dirinfo' and 1 for path exists with
+            several file information.
+        '''
         _result = os.path.join(
             self._file_dir,
             '/'.join('%d' % size))
         try:
             os.makedirs(_result)
-            return (_result, 0)
-        except:
-            if os.path.exists(os.path.join(_result, 'single.txt')):
-                return (_result, 1)
-            else:
+            return (_result, None)
+        except OSError as ex:
+            if ex.errno != 17: # path exists
+                raise
+            try:
+                _dirinfo = open(os.path.join(_result, 'dirinfo')).readline().split(' ')
+                return (_result, _dirinfo)
+            except IOError as ex:
+                if ex.errno == 2:  # file does not exist
+                    return (_result, None)
+                raise
                 # todo: assert existing hash files
-                return (_result, 2)
 
     def add(self, path):
         _file_count = 0
@@ -132,6 +153,7 @@ class indexer:
                 if not os.path.isfile(_fullname):
                     #logging.debug("skipping link %s" % _fullname)
                     continue
+                assert not os.path.islink(_fullname)
                 try:
                     _filesize = os.path.getsize(_fullname)
                     _time = int(os.path.getmtime(_fullname) * 100)
@@ -165,16 +187,13 @@ class indexer:
                     
                 logging.debug("%s, %d, %s, %d", fname, _filesize, _hash, _t * 1000)
     
-                if _state == 0:
+                if not _state:
                     # file size not registered
                     # create a file with file name and modification date
                     self._store_single_file(_size_path, _packed_name, _time)
                     pass
-                elif _state == 1:
-                    # single file registered
-                    pass
                 else:
-                    # more than one files already registered
+                    # meta info exists
                     pass
 
         print(_file_count, 'frame: {0:,} bytes'.format(_total_size))
