@@ -157,12 +157,13 @@ class indexer:
             
 
     def __init__(self):
-        # expensive - do it only once
         try:
+            # todo: make configurable
             make_dirs('~/.fsi')
         except path_exists_error:
             pass
 
+        # expensive - do it only once
         self._file_dir = os.path.expanduser('~/.fsi/files')
         self._name_file = os.path.expanduser('~/.fsi/name_parts.txt')
         self._name_component_store = indexer.name_component_store()
@@ -226,17 +227,16 @@ class indexer:
 
     def _add_file(self, filename):
         _filesize = os.path.getsize(filename)
-        _time = int(os.path.getmtime(filename) * 100)
 
         _size_path, _state = self._get_size_path(_filesize)
 
-        _packed_name = self._get_name_components(filename)
+        _packed_path = self._get_name_components(filename)
         
         if DEBUG_MODE:
-            assert (self._restore_name(_packed_name) == filename)
+            assert (self._restore_name(_packed_path) == filename)
             
-        # logging.debug("%s => %s", filename, _packed_name)
-        # print(_packed_name, _time)
+        # logging.debug("%s => %s", filename, _packed_path)
+        # print(_packed_path, _time)
         
         if DEBUG_MODE:
             assert sha1_internal(filename) == sha1_external(filename)
@@ -248,38 +248,69 @@ class indexer:
         if _state is None:
             # file size not registered
             # create a file with file name and modification date
-            self._store_single_file(_size_path, _packed_name)
+            self._store_single_file(_size_path, _packed_path)
         else:
             if _state[0] == 'single':
-                _path = _state[1]
-                if _packed_name != _path:
+                _other_packed_path = _state[1]
+                if _packed_path != _other_packed_path:
                     # we found another file with the same file - we have
                     # to turn this entry into a multi-entry
                     #print('collision')
-                    self._promote_to_multi(_size_path, _filesize, _path, _packed_name)
+                    self._promote_to_multi(_size_path, _filesize, _other_packed_path, _packed_path)
                 else:
                     #print('found myself')
                     pass
                     
             elif _state[0] == 'multi':
-                assert False
+                # assert False
+                pass
             else:
                 assert False
 
-        return _filesize, _packed_name
+        return _filesize, _packed_path
     
-    def _promote_to_multi(self, size_path, size, other_packed_name, new_packed_name):
+    def _promote_to_multi(self, size_path, size, other_packed_path, new_packed_name):
         ''' turn a single file entry into a multi file entry
         '''
         # todo raise if any hash cannot be computed
         # todo raise if second file does not exist
-        other_file_name = self._restore_name(other_packed_name)
-        new_file_name = self._restore_name(new_packed_name)
-        
+        other_file_name = self._restore_name(other_packed_path)
         hash1 = fast_sha1(other_file_name, size)
-        hash2 = fast_sha1(new_file_name, size)
+        mtime1 = str(int(os.path.getmtime(other_file_name) * 100))
         
-        #assert False
+        new_file_name = self._restore_name(new_packed_name)
+        hash2 = fast_sha1(new_file_name, size)
+        mtime2 = str(int(os.path.getmtime(new_file_name) * 100))
+        
+        # === red exception safety line ========================================
+        
+        dir_info_fn = os.path.join(size_path, 'dirinfo')
+        if hash1 == hash2:
+            hash_fn = os.path.join(size_path, hash1)
+            with open(dir_info_fn, 'w') as fd, open(hash_fn, 'w') as fh1:
+                fd.write('multi')
+                fh1.write(other_packed_path)
+                fh1.write(" ")
+                fh1.write(mtime1)
+                fh1.write("\n")
+                fh1.write(new_packed_name)
+                fh1.write(" ")
+                fh1.write(mtime2)
+                fh1.write("\n")
+        else:
+            hash1_fn = os.path.join(size_path, hash1)
+            hash2_fn = os.path.join(size_path, hash2)
+            with open(dir_info_fn, 'w') as fd, open(hash1_fn, 'w') as fh1, open(hash2_fn, 'w') as fh2:
+                fd.write('multi')
+                fh1.write(other_packed_path)
+                fh1.write(" ")
+                fh1.write(mtime1)
+                fh1.write("\n")
+                fh2.write(new_packed_name)
+                fh2.write(" ")
+                fh2.write(mtime2)
+                fh2.write("\n")
+                
         
     def add(self, path):
         if not os.path.exists(path):
