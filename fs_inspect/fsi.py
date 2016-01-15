@@ -10,10 +10,71 @@ import hashlib
 import functools
 import subprocess
 
+# todo: testen: .fsi-Inhalt gleich unter Python2/3
+# todo: testen: .fsi-Inhalt gleich ob mit oder ohne CTRL-C-Abbruch
+
+DEBUG_MODE = False
+
+class path_exists_error(Exception):
+    pass
+
+class file_not_found_error(Exception):
+    pass
+
+class read_permission_error(Exception):
+    pass
+
+
+def read_dirinfo(directory):
+    try:
+        return open(os.path.join(directory, 'dirinfo')).readline().split(' ')
+    except IOError as ex:
+        if ex.errno == 2:
+            raise file_not_found_error()
+        raise
+
+
+def load_json(filename):
+    try:
+        return json.load(open(filename), encoding='utf-8')
+    except IOError as ex:
+        if ex.errno == 2:
+            raise file_not_found_error()
+        raise
+
+
+if sys.version_info[0] >= 3:
+    def make_dirs(path):
+        try:
+            os.makedirs(os.path.expanduser(path))
+        except FileExistsError:
+            raise path_exists_error()
+
+    def dump_json(data, filename):
+        json.dump(data, open(filename, 'w'))
+
+    def path_join(path1, path2):
+        return os.path.join(path1, path2)
+
+else:
+    def make_dirs(path):
+        try:
+            os.makedirs(os.path.expanduser(path))
+        except OSError as ex:
+            if ex.errno == 17:
+                raise path_exists_error()
+            raise
+
+    def dump_json(data, filename):
+        json.dump(data, open(filename, 'w'), encoding='utf-8')
+        
+    def path_join(path1, path2):
+        return os.path.join(path1, path2).decode('utf-8')
+
 
 def sha1_external(filename):
     ''' fast with large files '''
-    output = subprocess.Popen(["sha1sum", filename], stdout=subprocess.PIPE).communicate()[0].decode()
+    output = subprocess.Popen(["sha1sum", filename.encode('utf-8')], stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
     # todo: check plausibility (length, "permission denied", etc)
     return output.split(' ')[0]
 
@@ -23,10 +84,14 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
     # max-limit-of-bytes-in-method-update-of-hashlib-python-module
     # http://stackoverflow.com/questions/4949162
     sha1_hash = hashlib.sha1()
-    with open(filename, 'rb', bufsize) as _file:
-        for chunk in iter(functools.partial(_file.read, chunksize), b''):
-            sha1_hash.update(chunk)
-    return sha1_hash.hexdigest()
+    try:
+        with open(filename, 'rb', bufsize) as _file:
+            for chunk in iter(functools.partial(_file.read, chunksize), b''):
+                sha1_hash.update(chunk)
+        return sha1_hash.hexdigest()
+    except IOError as ex:
+        if ex.errno == 2:
+            raise file_not_found_error()
 
 
 def fast_sha1(filename, size):
@@ -35,7 +100,7 @@ def fast_sha1(filename, size):
     else:
         return sha1_external(filename)
 
-        
+
 class indexer:
 
     class name_component_store:
@@ -61,13 +126,13 @@ class indexer:
             return self._idx_to_word[index]
 
         def save(self, filename):
-            json.dump(self._word_to_idx, open(filename, 'w'))
+            dump_json(self._word_to_idx, filename)
 
         def load(self, filename):
             _idx2word = {}
             try:
-                _word2idx = json.load(open(filename))
-            except:
+                _word2idx = load_json(filename)
+            except file_not_found_error:
                 # file does not exist - just exit
                 return
             for word, idx in _word2idx.items():
@@ -76,12 +141,28 @@ class indexer:
                 _idx2word, _word2idx, len(_idx2word))
 
         def __eq__(self, other):
-            return (self._size == other._size and
-                    self._idx_to_word == other._idx_to_word and
-                    self._word_to_idx == other._word_to_idx)
+            if (self._size == other._size and
+                self._idx_to_word == other._idx_to_word and
+                self._word_to_idx == other._word_to_idx):
+                return True
+            else:
+                print(self._size, other._size)
+                print(len(self._idx_to_word), len(other._idx_to_word))
+                print(len(self._word_to_idx), len(other._word_to_idx))
+                k1 = sorted(self._word_to_idx.keys())
+                k2 = sorted(other._word_to_idx.keys())
+                for i in range(len(k1)):
+                    print(k1[i], k2[i])
+                return False
+            
 
     def __init__(self):
         # expensive - do it only once
+        try:
+            make_dirs('~/.fsi')
+        except path_exists_error:
+            pass
+
         self._file_dir = os.path.expanduser('~/.fsi/files')
         self._name_file = os.path.expanduser('~/.fsi/name_parts.txt')
         self._name_component_store = indexer.name_component_store()
@@ -91,15 +172,18 @@ class indexer:
         return self
 
     def __exit__(self, data_type, value, tb):
-        # store and load to debug structure for test purposes
-        t = time.time()
-        self._name_component_store.save(self._name_file)
-        logging.debug("save: %.2fs", time.time() - t)
-        _test_store = indexer.name_component_store()
-        t = time.time()
-        _test_store.load(self._name_file)
-        logging.debug("load: %.4fs", time.time() - t)
-        assert _test_store == self._name_component_store
+        if DEBUG_MODE:
+            # store and load to debug structure for test purposes
+            t = time.time()
+            self._name_component_store.save(self._name_file)
+            logging.debug("save: %.2fs", time.time() - t)
+            _test_store = indexer.name_component_store()
+            t = time.time()
+            _test_store.load(self._name_file)
+            logging.debug("load: %.4fs", time.time() - t)
+            assert _test_store == self._name_component_store
+        else:
+            self._name_component_store.save(self._name_file)
 
     def _get_name_components(self, path):
         ''' turn "/home/user/some/directory" into index based string
@@ -128,55 +212,35 @@ class indexer:
             several file information.
         '''
         _result = os.path.join(self._file_dir, '/'.join('%d' % size))
+        
         try:
-            os.makedirs(_result)
+            make_dirs(_result)
             return (_result, None)
-        except OSError as ex:
-            if ex.errno != 17: # path exists
-                raise
+        except path_exists_error:
             try:
-                _dirinfo = open(os.path.join(_result, 'dirinfo')).readline().split(' ')
+                _dirinfo = read_dirinfo(_result)
                 return (_result, _dirinfo)
-            except IOError as ex:
-                if ex.errno == 2:  # file does not exist
-                    return (_result, None)
-                raise
+            except file_not_found_error:
+                return (_result, None)
                 # todo: assert existing hash files
 
     def _add_file(self, filename):
-        try:
-            _filesize = os.path.getsize(filename)
-            _time = int(os.path.getmtime(filename) * 100)
-        except:
-            logging.warn('permission denied: "%s"', filename)
-            raise
+        _filesize = os.path.getsize(filename)
+        _time = int(os.path.getmtime(filename) * 100)
 
         _size_path, _state = self._get_size_path(_filesize)
 
         _packed_name = self._get_name_components(filename)
-        assert (self._restore_name(_packed_name) == filename)
+        
+        if DEBUG_MODE:
+            assert (self._restore_name(_packed_name) == filename)
+            
         # logging.debug("%s => %s", filename, _packed_name)
         # print(_packed_name, _time)
-
-        try:
-            _t = time.time()
-            if _filesize < 60000:
-                _hash = sha1_internal(filename)
-            else:
-                _hash = sha1_external(filename)
-            _t = time.time() - _t
+        
+        if DEBUG_MODE:
+            assert sha1_internal(filename) == sha1_external(filename)
     
-            if _filesize >= 10 ** 6:
-                logging.debug("#=%s, %s bytes, %.1fms, %.2fMb/ms, /%s/%s",
-                              _hash, '{0:,}'.format(_filesize),  _t * 1000,
-                              _filesize / (2 << 20) / (_t  * 1000) ,
-                              _packed_name, os.path.basename(filename))
-        except IOError as ex:
-            if ex.errno == 13:
-                logging.warn('cannot create checksum (permission denied): "%s"',
-                             filename)
-            raise
-
         # === no state changing operations before
         # === red exception safety line ===============================
         # === no exceptions after
@@ -191,17 +255,18 @@ class indexer:
                 if _packed_name != _path:
                     # we found another file with the same file - we have
                     # to turn this entry into a multi-entry
-                    print('collision')
+                    #print('collision')
                     self._promote_to_multi(_size_path, _filesize, _path, _packed_name)
                 else:
-                    print('found myself')
+                    #print('found myself')
+                    pass
                     
             elif _state[0] == 'multi':
                 assert False
             else:
                 assert False
 
-        return _filesize
+        return _filesize, _packed_name
     
     def _promote_to_multi(self, size_path, size, other_packed_name, new_packed_name):
         ''' turn a single file entry into a multi file entry
@@ -214,20 +279,22 @@ class indexer:
         hash1 = fast_sha1(other_file_name, size)
         hash2 = fast_sha1(new_file_name, size)
         
-        assert False
+        #assert False
         
     def add(self, path):
+        if not os.path.exists(path):
+            return
         _file_count = 0
         _perf_measure_t = time.time()
         _total_size = 0
-        _ignore_pattern = ('.git', '.svn', '__pycache__')
+        _ignore_pattern = ('.git', '.svn', '__pycache__', '.fsi')
 
         for (_dir, _dirs, files) in os.walk(path, topdown=True):
             _dirs[:] = [d for d in _dirs if d not in _ignore_pattern]
 
             _dir = os.path.abspath(_dir)
             for fname in files:
-                _fullname = os.path.join(_dir, fname)
+                _fullname = path_join(_dir, fname)
 
                 assert _fullname[0] == '/'
 
@@ -237,16 +304,23 @@ class indexer:
                 if not os.path.isfile(_fullname):
                     logging.debug("skip special %s" % _fullname)
                     continue
+                
                 try:
-                    _total_size += self._add_file(_fullname)
-                except IOError as ex:
-                    if ex.errno == 13:
-                        # IOError 13 perm denied
-                        continue
+                    _t = time.time()
+                    _filesize, _ = self._add_file(_fullname)
+                    _t = time.time() - _t
+                    _total_size += _filesize
+                except KeyboardInterrupt:
                     raise
-                except:
-                    raise
+                
                 _file_count += 1
+                
+                if _filesize >= 10 ** 6:
+                    logging.debug("%s: %s bytes, %.1fms, %.2fMb/ms",
+                                  fname,
+                                  '{0:,}'.format(_filesize), _t * 1000,
+                                  _filesize / (2 << 20) / (_t  * 1000))
+                
 
                 if _file_count % 1000 == 0:
                     _t = time.time()
@@ -260,31 +334,15 @@ class indexer:
         logging.info("added %d files with a total of %s bytes",
                      _file_count, '{0:,}'.format(_total_size))
 
+def p(s):
+    print(s)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     logging.debug('.'.join((str(e) for e in sys.version_info)))
-    with indexer() as p:
-        p.add(sys.argv[1])
-
-
-'''
-size_cats:
-
-    0:    2004
-    1:   14909 ****
-    2:   79085 **************************
-    3:  169468 ********************************************************
-    4:   61196 ********************
-    5:   12829 ****
-    6:    7339 **
-    7:     890
-    8:      47
-    9:      16
-
-files:  347783
-sizes:   55014
-folders: 70877
-
-'''
-
+    
+    try:
+        with indexer() as p:
+            p.add(sys.argv[1])
+    except KeyboardInterrupt:
+        print("aborted")
