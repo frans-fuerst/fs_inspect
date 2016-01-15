@@ -10,8 +10,10 @@ import hashlib
 import functools
 import subprocess
 
-# todo: testen: .fsi-Inhalt gleich unter Python2/3
-# todo: testen: .fsi-Inhalt gleich ob mit oder ohne CTRL-C-Abbruch
+# todo: test: .fsi-content is equal Python2/3
+# todo: test: .fsi-content is equal with or without abortion CTRL-C-Abbruch
+# todo: test: .fsi-Inhalt gleich nach 1. und 2. Lauf
+# todo: if file content/size has changed old reference has to be deleted
 
 DEBUG_MODE = False
 
@@ -92,6 +94,9 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
     except IOError as ex:
         if ex.errno == 2:
             raise file_not_found_error()
+        elif ex.errno == 13:
+            raise read_permission_error()
+        raise
 
 
 def fast_sha1(filename, size):
@@ -258,7 +263,8 @@ class indexer:
                     #print('collision')
                     self._promote_to_multi(_size_path, _filesize, _other_packed_path, _packed_path)
                 else:
-                    #print('found myself')
+                    # we found the reference to the current file
+                    # so nothing has changed and nothing left to do
                     pass
                     
             elif _state[0] == 'multi':
@@ -286,6 +292,7 @@ class indexer:
         
         dir_info_fn = os.path.join(size_path, 'dirinfo')
         if hash1 == hash2:
+            logging.debug('found identical: %s %s', other_file_name, new_file_name)
             hash_fn = os.path.join(size_path, hash1)
             with open(dir_info_fn, 'w') as fd, open(hash_fn, 'w') as fh1:
                 fd.write('multi')
@@ -341,6 +348,9 @@ class indexer:
                     _filesize, _ = self._add_file(_fullname)
                     _t = time.time() - _t
                     _total_size += _filesize
+                except read_permission_error:
+                    logging.warn('cannot handle "%s": read permission denied', 
+                                 _fullname)
                 except KeyboardInterrupt:
                     raise
                 
