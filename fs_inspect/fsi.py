@@ -317,6 +317,9 @@ class indexer:
                 indexer._write_file_reference(fh2, new_packed_name, mtime2)
                 
     def _update_multi(self, size_path, size, filename, packed_name):
+        ''' we have to update a given dirinfo file.'''
+        # problem: we have to know which hash-file to open but we don't want
+        #          to calculate the hash in the first place
         hash1 = fast_sha1(filename, size)
         mtime1 = str(int(os.path.getmtime(filename) * 100))
         hash_fn = os.path.join(size_path, hash1)
