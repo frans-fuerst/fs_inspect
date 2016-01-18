@@ -306,27 +306,15 @@ class indexer:
             hash_fn = os.path.join(size_path, hash1)
             with fopen(dir_info_fn, 'w') as fd, fopen(hash_fn, 'w') as fh1:
                 fd.write('multi')
-                fh1.write(other_packed_path)
-                fh1.write(" ")
-                fh1.write(mtime1)
-                fh1.write("\n")
-                fh1.write(new_packed_name)
-                fh1.write(" ")
-                fh1.write(mtime2)
-                fh1.write("\n")
+                indexer._write_file_reference(fh1, other_packed_path, mtime1)
+                indexer._write_file_reference(fh1, new_packed_name, mtime2)
         else:
             hash1_fn = os.path.join(size_path, hash1)
             hash2_fn = os.path.join(size_path, hash2)
             with fopen(dir_info_fn, 'w') as fd, fopen(hash1_fn, 'w') as fh1, fopen(hash2_fn, 'w') as fh2:
                 fd.write('multi')
-                fh1.write(other_packed_path)
-                fh1.write(" ")
-                fh1.write(mtime1)
-                fh1.write("\n")
-                fh2.write(new_packed_name)
-                fh2.write(" ")
-                fh2.write(mtime2)
-                fh2.write("\n")
+                indexer._write_file_reference(fh1, other_packed_path, mtime1)
+                indexer._write_file_reference(fh2, new_packed_name, mtime2)
                 
     def _update_multi(self, size_path, size, filename, packed_name):
         hash1 = fast_sha1(filename, size)
@@ -339,14 +327,14 @@ class indexer:
         except file_not_found_error:
             # file does not exist - create it with one entry
             with fopen(hash_fn, 'w') as fh:
-                self._write_file_reference(fh, packed_name, mtime1)
+                indexer._write_file_reference(fh, packed_name, mtime1)
         
-    @classmethod        
+    @staticmethod
     def _write_file_reference(file_obj, packed_path, mtime):
-        fh2.write(packed_path)
-        fh2.write(" ")
-        fh2.write(mtime)
-        fh2.write("\n")
+        file_obj.write(packed_path)
+        file_obj.write(" ")
+        file_obj.write(mtime)
+        file_obj.write("\n")
         
     def add(self, path):
         if not os.path.exists(path):
