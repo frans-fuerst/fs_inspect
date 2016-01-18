@@ -9,6 +9,7 @@ import json
 import hashlib
 import functools
 import subprocess
+import contextlib
 
 # todo: test: .fsi-content is equal Python2/3
 # todo: test: .fsi-content is equal with or without abortion CTRL-C-Abbruch
@@ -26,6 +27,17 @@ class file_not_found_error(Exception):
 class read_permission_error(Exception):
     pass
 
+@contextlib.contextmanager
+def fopen(filename, mode='r'):
+    try:
+        with open(filename, mode) as f:
+            yield f
+    except IOError as ex:
+        if ex.errno == 2:
+            raise file_not_found_error()
+        elif ex.errno == 13:
+            raise read_permission_error()
+        raise
 
 def read_dirinfo(directory):
     try:
@@ -261,15 +273,20 @@ class indexer:
                     # we found another file with the same file - we have
                     # to turn this entry into a multi-entry
                     #print('collision')
-                    self._promote_to_multi(_size_path, _filesize, _other_packed_path, _packed_path)
+                    self._promote_to_multi(_size_path, _filesize, 
+                                           _other_packed_path, _packed_path)
                 else:
                     # we found the reference to the current file
                     # so nothing has changed and nothing left to do
                     pass
                     
             elif _state[0] == 'multi':
+                # we found a file size folder which contains one or more file
+                # references with hashes and modification date so we have to
+                # add the current files' information
                 # assert False
-                pass
+                self._update_multi(_size_path, _filesize, 
+                                   filename, _packed_path)
             else:
                 assert False
 
@@ -308,6 +325,7 @@ class indexer:
             hash1_fn = os.path.join(size_path, hash1)
             hash2_fn = os.path.join(size_path, hash2)
             with open(dir_info_fn, 'w') as fd, open(hash1_fn, 'w') as fh1, open(hash2_fn, 'w') as fh2:
+                
                 fd.write('multi')
                 fh1.write(other_packed_path)
                 fh1.write(" ")
@@ -318,6 +336,25 @@ class indexer:
                 fh2.write(mtime2)
                 fh2.write("\n")
                 
+    def _update_multi(self, size_path, size, filename, packed_name):
+        hash1 = fast_sha1(filename, size)
+        mtime1 = str(int(os.path.getmtime(filename) * 100))
+        hash_fn = os.path.join(size_path, hash1)
+        
+        try:
+            with fopen(hash_fn) as fh:
+                pass
+        except file_not_found_error:
+            # file does not exist - create it with one entry
+            with open(hash_fn, 'w') as fh:
+                self._write_file_reference(fh, packed_name, mtime1)
+        
+    @classmethod        
+    def _write_file_reference(file_obj, packed_path, mtime):
+        fh2.write(packed_path)
+        fh2.write(" ")
+        fh2.write(mtime)
+        fh2.write("\n")
         
     def add(self, path):
         if not os.path.exists(path):
@@ -375,13 +412,11 @@ class indexer:
         logging.info("added %d files with a total of %s bytes",
                      _file_count, '{0:,}'.format(_total_size))
 
-def p(s):
-    print(s)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     logging.debug('.'.join((str(e) for e in sys.version_info)))
-    
+
     try:
         with indexer() as p:
             p.add(sys.argv[1])
