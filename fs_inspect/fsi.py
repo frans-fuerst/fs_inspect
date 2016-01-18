@@ -28,9 +28,9 @@ class read_permission_error(Exception):
     pass
 
 @contextlib.contextmanager
-def fopen(filename, mode='r'):
+def fopen(filename, mode='r', buffering=1):
     try:
-        with open(filename, mode) as f:
+        with open(filename, mode, buffering) as f:
             yield f
     except IOError as ex:
         if ex.errno == 2:
@@ -98,17 +98,10 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
     # max-limit-of-bytes-in-method-update-of-hashlib-python-module
     # http://stackoverflow.com/questions/4949162
     sha1_hash = hashlib.sha1()
-    try:
-        with open(filename, 'rb', bufsize) as _file:
-            for chunk in iter(functools.partial(_file.read, chunksize), b''):
-                sha1_hash.update(chunk)
-        return sha1_hash.hexdigest()
-    except IOError as ex:
-        if ex.errno == 2:
-            raise file_not_found_error()
-        elif ex.errno == 13:
-            raise read_permission_error()
-        raise
+    with fopen(filename, 'rb', bufsize) as _file:
+        for chunk in iter(functools.partial(_file.read, chunksize), b''):
+            sha1_hash.update(chunk)
+    return sha1_hash.hexdigest()
 
 
 def fast_sha1(filename, size):
@@ -218,7 +211,7 @@ class indexer:
 
     def _store_single_file(self, size_path, name):
         ''' write a file with meta information about a single file '''
-        with open(os.path.join(size_path, 'dirinfo'), 'w') as _f:
+        with fopen(os.path.join(size_path, 'dirinfo'), 'w') as _f:
             _f.write("single ")
             _f.write(name)
 
@@ -311,7 +304,7 @@ class indexer:
         if hash1 == hash2:
             logging.debug('found identical: %s %s', other_file_name, new_file_name)
             hash_fn = os.path.join(size_path, hash1)
-            with open(dir_info_fn, 'w') as fd, open(hash_fn, 'w') as fh1:
+            with fopen(dir_info_fn, 'w') as fd, fopen(hash_fn, 'w') as fh1:
                 fd.write('multi')
                 fh1.write(other_packed_path)
                 fh1.write(" ")
@@ -324,8 +317,7 @@ class indexer:
         else:
             hash1_fn = os.path.join(size_path, hash1)
             hash2_fn = os.path.join(size_path, hash2)
-            with open(dir_info_fn, 'w') as fd, open(hash1_fn, 'w') as fh1, open(hash2_fn, 'w') as fh2:
-                
+            with fopen(dir_info_fn, 'w') as fd, fopen(hash1_fn, 'w') as fh1, fopen(hash2_fn, 'w') as fh2:
                 fd.write('multi')
                 fh1.write(other_packed_path)
                 fh1.write(" ")
@@ -346,7 +338,7 @@ class indexer:
                 pass
         except file_not_found_error:
             # file does not exist - create it with one entry
-            with open(hash_fn, 'w') as fh:
+            with fopen(hash_fn, 'w') as fh:
                 self._write_file_reference(fh, packed_name, mtime1)
         
     @classmethod        
