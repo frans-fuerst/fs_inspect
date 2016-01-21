@@ -15,6 +15,7 @@ import contextlib
 # todo: test: .fsi-content is equal with or without abortion CTRL-C-Abbruch
 # todo: test: .fsi-Inhalt gleich nach 1. und 2. Lauf
 # todo: if file content/size has changed old reference has to be deleted
+# todo: introduce a corresponding directory based search folder
 
 DEBUG_MODE = False
 
@@ -27,11 +28,9 @@ class file_not_found_error(Exception):
 class read_permission_error(Exception):
     pass
 
-@contextlib.contextmanager
 def fopen(filename, mode='r', buffering=1):
     try:
-        with open(filename, mode, buffering) as f:
-            yield f
+        return open(filename, mode, buffering)
     except IOError as ex:
         if ex.errno == 2:
             raise file_not_found_error()
@@ -39,48 +38,33 @@ def fopen(filename, mode='r', buffering=1):
             raise read_permission_error()
         raise
 
-def read_dirinfo(directory):
-    try:
-        return open(os.path.join(directory, 'dirinfo')).readline().split(' ')
-    except IOError as ex:
-        if ex.errno == 2:
-            raise file_not_found_error()
-        raise
+@contextlib.contextmanager
+def wopen(filename, mode='r', buffering=1):
+    with fopen(filename, mode, buffering) as f:
+        yield f
 
+def make_dirs(path):
+    try:
+        os.makedirs(os.path.expanduser(path))
+    except OSError as ex:
+        if ex.errno == 17:
+            raise path_exists_error()
+        raise
 
 def load_json(filename):
-    try:
-        return json.load(open(filename), encoding='utf-8')
-    except IOError as ex:
-        if ex.errno == 2:
-            raise file_not_found_error()
-        raise
-
+    return json.load(fopen(filename), encoding='utf-8')
 
 if sys.version_info[0] >= 3:
-    def make_dirs(path):
-        try:
-            os.makedirs(os.path.expanduser(path))
-        except FileExistsError:
-            raise path_exists_error()
 
     def dump_json(data, filename):
-        json.dump(data, open(filename, 'w'))
+        json.dump(data, fopen(filename, 'w'))
 
     def path_join(path1, path2):
         return os.path.join(path1, path2)
 
 else:
-    def make_dirs(path):
-        try:
-            os.makedirs(os.path.expanduser(path))
-        except OSError as ex:
-            if ex.errno == 17:
-                raise path_exists_error()
-            raise
-
     def dump_json(data, filename):
-        json.dump(data, open(filename, 'w'), encoding='utf-8')
+        json.dump(data, fopen(filename, 'w'), encoding='utf-8')
         
     def path_join(path1, path2):
         return os.path.join(path1, path2).decode('utf-8')
@@ -88,7 +72,9 @@ else:
 
 def sha1_external(filename):
     ''' fast with large files '''
-    output = subprocess.Popen(["sha1sum", filename.encode('utf-8')], stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
+    output = subprocess.Popen(
+        ["sha1sum", filename.encode('utf-8')], 
+        stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
     # todo: check plausibility (length, "permission denied", etc)
     return output.split(' ')[0]
 
@@ -98,17 +84,10 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
     # max-limit-of-bytes-in-method-update-of-hashlib-python-module
     # http://stackoverflow.com/questions/4949162
     sha1_hash = hashlib.sha1()
-    with fopen(filename, 'rb', bufsize) as _file:
+    with wopen(filename, 'rb', bufsize) as _file:
         for chunk in iter(functools.partial(_file.read, chunksize), b''):
             sha1_hash.update(chunk)
     return sha1_hash.hexdigest()
-
-
-def fast_sha1(filename, size):
-    if size < 50000:
-        return sha1_internal(filename)
-    else:
-        return sha1_external(filename)
 
 
 class indexer:
@@ -164,7 +143,6 @@ class indexer:
                 for i in range(len(k1)):
                     print(k1[i], k2[i])
                 return False
-            
 
     def __init__(self):
         try:
@@ -174,7 +152,8 @@ class indexer:
             pass
 
         # expensive - do it only once
-        self._file_dir = os.path.expanduser('~/.fsi/files')
+        self._bysize_dir = os.path.expanduser('~/.fsi/sizes')
+        # self._bydir_dir = os.path.expanduser('~/.fsi/dirs')
         self._name_file = os.path.expanduser('~/.fsi/name_parts.txt')
         self._name_component_store = indexer.name_component_store()
 
@@ -198,20 +177,20 @@ class indexer:
 
     def _get_name_components(self, path):
         ''' turn "/home/user/some/directory" into index based string
-            e.g. "2/7/4/9"'''
+            e.g. "2.7.4.9"'''
         #todo: assert: '/{}'" not in path
-        return '/'.join((str(self._name_component_store.get_index(n))
+        return '.'.join((str(self._name_component_store.get_index(n))
                              for n in path[1:].split('/')))
 
     def _restore_name(self, packed_path):
         ''' opposite of _get_name_components(): restores the original path
             on the filesystem '''
         return '/' + '/'.join((self._name_component_store[i]
-                         for i in (int(c) for c in packed_path.split('/'))))
+                         for i in (int(c) for c in packed_path.split('.'))))
 
     def _store_single_file(self, size_path, name):
         ''' write a file with meta information about a single file '''
-        with fopen(os.path.join(size_path, 'dirinfo'), 'w') as _f:
+        with wopen(os.path.join(size_path, 'dirinfo'), 'w') as _f:
             _f.write("single ")
             _f.write(name)
 
@@ -222,14 +201,14 @@ class indexer:
             1 for path exists with a 'dirinfo' and 1 for path exists with
             several file information.
         '''
-        _result = os.path.join(self._file_dir, '/'.join('%d' % size))
+        _result = os.path.join(self._bysize_dir, '/'.join('%d' % size))
         
         try:
             make_dirs(_result)
             return (_result, None)
         except path_exists_error:
             try:
-                _dirinfo = read_dirinfo(_result)
+                _dirinfo = indexer._read_dirinfo(_result)
                 return (_result, _dirinfo)
             except file_not_found_error:
                 return (_result, None)
@@ -284,19 +263,40 @@ class indexer:
                 assert False
 
         return _filesize, _packed_path
+
+    @staticmethod
+    def _read_dirinfo(directory):
+        return fopen(os.path.join(directory, 'dirinfo')).readline().split(' ')
+
+    @staticmethod
+    def fast_sha1(filename, size):
+        if size < 50000:
+            return sha1_internal(filename)
+        else:
+            return sha1_external(filename)
+
+    @staticmethod
+    def _get_hash_date(filename, size):
+        ''' return a 2-tuple containing sha1 and modification date '''
+        return (indexer.fast_sha1(filename, size),
+                str(int(os.path.getmtime(filename) * 100)))
     
     def _promote_to_multi(self, size_path, size, other_packed_path, new_packed_name):
         ''' turn a single file entry into a multi file entry
         '''
         # todo raise if any hash cannot be computed
         # todo raise if second file does not exist
-        other_file_name = self._restore_name(other_packed_path)
-        hash1 = fast_sha1(other_file_name, size)
-        mtime1 = str(int(os.path.getmtime(other_file_name) * 100))
+        try:
+            other_file_name = self._restore_name(other_packed_path)
+            hash1, mtime1 = indexer._get_hash_date(other_file_name, size)
+        except file_not_found_error:
+            # other file has been renamed/removed or it's filesystem is 
+            # currently not mounted
+            # todo: not good like this
+            assert False
         
         new_file_name = self._restore_name(new_packed_name)
-        hash2 = fast_sha1(new_file_name, size)
-        mtime2 = str(int(os.path.getmtime(new_file_name) * 100))
+        hash2, mtime2 = indexer._get_hash_date(new_file_name, size)
         
         # === red exception safety line ========================================
         
@@ -304,33 +304,54 @@ class indexer:
         if hash1 == hash2:
             logging.debug('found identical: %s %s', other_file_name, new_file_name)
             hash_fn = os.path.join(size_path, hash1)
-            with fopen(dir_info_fn, 'w') as fd, fopen(hash_fn, 'w') as fh1:
+            with wopen(dir_info_fn, 'w') as fd, wopen(hash_fn, 'w') as fh1:
                 fd.write('multi')
                 indexer._write_file_reference(fh1, other_packed_path, mtime1)
                 indexer._write_file_reference(fh1, new_packed_name, mtime2)
         else:
             hash1_fn = os.path.join(size_path, hash1)
             hash2_fn = os.path.join(size_path, hash2)
-            with fopen(dir_info_fn, 'w') as fd, fopen(hash1_fn, 'w') as fh1, fopen(hash2_fn, 'w') as fh2:
+            with wopen(dir_info_fn, 'w') as fd, wopen(hash1_fn, 'w') as fh1, wopen(hash2_fn, 'w') as fh2:
                 fd.write('multi')
                 indexer._write_file_reference(fh1, other_packed_path, mtime1)
                 indexer._write_file_reference(fh2, new_packed_name, mtime2)
-                
+        os.symlink(hash1, 
+                   os.path.join(size_path, other_packed_path))
+        os.symlink(hash2,
+                   os.path.join(size_path, new_packed_name))
+    @staticmethod
+    def _hashed_files(filename):
+        _lines = (l.strip().split() for l in fopen(filename).readlines())
+        # return ((h.strip(), d.strip()) for h, d in _lines)
+        return {h.strip(): d.strip() for h, d in _lines}
+    
     def _update_multi(self, size_path, size, filename, packed_name):
-        ''' we have to update a given dirinfo file.'''
-        # problem: we have to know which hash-file to open but we don't want
-        #          to calculate the hash in the first place
-        hash1 = fast_sha1(filename, size)
-        mtime1 = str(int(os.path.getmtime(filename) * 100))
-        hash_fn = os.path.join(size_path, hash1)
+        ''' we have to update a given dirinfo file. with a given file
+            specification'''
+
+        _link_to_hash = os.path.join(size_path, packed_name)
+
+        assert os.path.exists(os.path.join(size_path, 'dirinfo'))
+        # assert os.path.exists(_link_to_hash)
         
         try:
-            with fopen(hash_fn) as fh:
-                pass
+            _hashed_files = indexer._hashed_files(_link_to_hash)
         except file_not_found_error:
             # file does not exist - create it with one entry
-            with fopen(hash_fn, 'w') as fh:
-                indexer._write_file_reference(fh, packed_name, mtime1)
+            h, d = indexer._get_hash_date(filename, size)
+            hash_fn = os.path.join(size_path, h)
+            with wopen(hash_fn, 'w') as fh:
+                indexer._write_file_reference(fh, packed_name, d)
+            os.symlink(h,
+                       os.path.join(size_path, packed_name))
+            return
+        
+        if packed_name in _hashed_files:
+            # check file size
+            pass
+        else:
+            pass
+            
         
     @staticmethod
     def _write_file_reference(file_obj, packed_path, mtime):
