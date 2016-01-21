@@ -91,7 +91,49 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
 
 
 class indexer:
+    
+    class file_info:
+        def __init__(self, filename):
+            assert filename[0] == '/'
+            self._fullname = filename
+            self._size = None
+            self._packed_path = None
+            self._sha1 = None 
+            self._mdate = None
+            
+        def path(self):
+            return self._fullname
 
+        def size(self):
+            if self._size is None:
+                self._size = os.path.getsize(self._fullname)
+            return self._size
+        
+        def mdate(self):
+            if self._mdate is None:
+                self._mdate = int(os.path.getmtime(self._fullname) * 100)
+            return self._mdate
+        
+        def hash_sha1(self):
+            if self._sha1 is None:
+                self._sha1 = indexer.fast_sha1(self._fullname, self.size())
+            return self._mdate
+        
+        def is_normal_file(self):
+            return (os.path.isfile(self._fullname) and 
+                    not os.path.islink(self._fullname))
+        
+        def packed_path(self, word_store=None):
+            ''' turn "/home/user/some/directory" into index based string
+                e.g. "2.7.4.9"'''
+            #todo: assert: '/{}'" not in path
+            if self._packed_path is None:
+                assert word_store is not None
+                self._packed_path = '.'.join(
+                    (str(word_store.get_index(n)) 
+                     for n in self._fullname[1:].split('/')))
+            return self._packed_path
+        
     class name_component_store:
         def __init__(self):
             self._idx_to_word = {}
@@ -175,13 +217,6 @@ class indexer:
         else:
             self._name_component_store.save(self._name_file)
 
-    def _get_name_components(self, path):
-        ''' turn "/home/user/some/directory" into index based string
-            e.g. "2.7.4.9"'''
-        #todo: assert: '/{}'" not in path
-        return '.'.join((str(self._name_component_store.get_index(n))
-                             for n in path[1:].split('/')))
-
     def _restore_name(self, packed_path):
         ''' opposite of _get_name_components(): restores the original path
             on the filesystem '''
@@ -194,14 +229,16 @@ class indexer:
             _f.write("single ")
             _f.write(name)
 
-    def _get_size_path(self, size):
+    def _get_size_path(self, file_instance):
         ''' returns a tuple with a path representing the file's size and the
             status of the path.
             Creates it if not existent. status is 0 for path did not exist yet,
             1 for path exists with a 'dirinfo' and 1 for path exists with
             several file information.
         '''
-        _result = os.path.join(self._bysize_dir, '/'.join('%d' % size))
+        _result = os.path.join(
+            self._bysize_dir, 
+            '/'.join('%d' % file_instance.size()))
         
         try:
             make_dirs(_result)
@@ -214,13 +251,10 @@ class indexer:
                 return (_result, None)
                 # todo: assert existing hash files
 
-    def _add_file(self, filename):
-        _filesize = os.path.getsize(filename)
+    def _add_file(self, file_instance):
+        _size_path, _state = self._get_size_path(file_instance)
+        _packed_path = file_instance.packed_path(self._name_component_store)
 
-        _size_path, _state = self._get_size_path(_filesize)
-
-        _packed_path = self._get_name_components(filename)
-        
         if DEBUG_MODE:
             assert (self._restore_name(_packed_path) == filename)
             
@@ -241,28 +275,27 @@ class indexer:
         else:
             if _state[0] == 'single':
                 _other_packed_path = _state[1]
-                if _packed_path != _other_packed_path:
-                    # we found another file with the same file - we have
-                    # to turn this entry into a multi-entry
-                    #print('collision')
-                    self._promote_to_multi(_size_path, _filesize, 
-                                           _other_packed_path, _packed_path)
-                else:
+                if _packed_path == _other_packed_path:
                     # we found the reference to the current file
                     # so nothing has changed and nothing left to do
                     pass
+                else:
+                    # we found another file with the same file - we have
+                    # to turn this entry into a multi-entry
+                    #print('collision')
+                    self._promote_to_multi(
+                        _size_path, 
+                        indexer.file_info(self._restore_name(_other_packed_path)), 
+                        file_instance)
                     
             elif _state[0] == 'multi':
                 # we found a file size folder which contains one or more file
                 # references with hashes and modification date so we have to
                 # add the current files' information
                 # assert False
-                self._update_multi(_size_path, _filesize, 
-                                   filename, _packed_path)
+                self._update_multi(_size_path, file_instance)
             else:
                 assert False
-
-        return _filesize, _packed_path
 
     @staticmethod
     def _read_dirinfo(directory):
@@ -275,39 +308,23 @@ class indexer:
         else:
             return sha1_external(filename)
 
-    @staticmethod
-    def _get_hash_date(filename, size):
-        ''' return a 2-tuple containing sha1 and modification date '''
-        return (indexer.fast_sha1(filename, size),
-                str(int(os.path.getmtime(filename) * 100)))
-    
-    def _promote_to_multi(self, size_path, size, other_packed_path, new_packed_name):
+    def _promote_to_multi(self, size_path, other_file, new_file):
         ''' turn a single file entry into a multi file entry
         '''
         # todo raise if any hash cannot be computed
         # todo raise if second file does not exist
-        try:
-            other_file_name = self._restore_name(other_packed_path)
-            hash1, mtime1 = indexer._get_hash_date(other_file_name, size)
-        except file_not_found_error:
-            # other file has been renamed/removed or it's filesystem is 
-            # currently not mounted
-            # todo: not good like this
-            assert False
-        
-        new_file_name = self._restore_name(new_packed_name)
-        hash2, mtime2 = indexer._get_hash_date(new_file_name, size)
         
         # === red exception safety line ========================================
         
         dir_info_fn = os.path.join(size_path, 'dirinfo')
-        if hash1 == hash2:
-            logging.debug('found identical: %s %s', other_file_name, new_file_name)
-            hash_fn = os.path.join(size_path, hash1)
+        if new_file.hash_sha1() == other_file.hash_sha1():
+            logging.debug('found identical: %s %s', 
+                          new_file.path(), other_file.path())
+            hash_fn = os.path.join(size_path, new_file.hash_sha1())
             with wopen(dir_info_fn, 'w') as fd, wopen(hash_fn, 'w') as fh1:
                 fd.write('multi')
-                indexer._write_file_reference(fh1, other_packed_path, mtime1)
-                indexer._write_file_reference(fh1, new_packed_name, mtime2)
+                indexer._write_file_reference(fh1, other_file)
+                indexer._write_file_reference(fh1, new_file)
         else:
             hash1_fn = os.path.join(size_path, hash1)
             hash2_fn = os.path.join(size_path, hash2)
@@ -319,17 +336,18 @@ class indexer:
                    os.path.join(size_path, other_packed_path))
         os.symlink(hash2,
                    os.path.join(size_path, new_packed_name))
+        
     @staticmethod
     def _hashed_files(filename):
         _lines = (l.strip().split() for l in fopen(filename).readlines())
         # return ((h.strip(), d.strip()) for h, d in _lines)
         return {h.strip(): d.strip() for h, d in _lines}
     
-    def _update_multi(self, size_path, size, filename, packed_name):
+    def _update_multi(self, size_path, file_instance):
         ''' we have to update a given dirinfo file. with a given file
             specification'''
 
-        _link_to_hash = os.path.join(size_path, packed_name)
+        _link_to_hash = os.path.join(size_path, file_instance.packed_path())
 
         assert os.path.exists(os.path.join(size_path, 'dirinfo'))
         # assert os.path.exists(_link_to_hash)
@@ -341,14 +359,18 @@ class indexer:
             h, d = indexer._get_hash_date(filename, size)
             hash_fn = os.path.join(size_path, h)
             with wopen(hash_fn, 'w') as fh:
-                indexer._write_file_reference(fh, packed_name, d)
+                indexer._write_file_reference(fh, file_instance.packed_path(), d)
             os.symlink(h,
-                       os.path.join(size_path, packed_name))
+                       os.path.join(size_path, file_instance.packed_path()))
             return
         
-        if packed_name in _hashed_files:
-            # check file size
-            pass
+        if file_instance.packed_path() in _hashed_files:
+            # check file mdate
+            if _hashed_files[file_instance.packed_path()] == file_instance.mdate():
+                # file reference is up to date - nothing to do
+                pass
+            else:
+                pass
         else:
             pass
             
@@ -373,35 +395,29 @@ class indexer:
 
             _dir = os.path.abspath(_dir)
             for fname in files:
-                _fullname = path_join(_dir, fname)
-
-                assert _fullname[0] == '/'
-
-                if os.path.islink(_fullname):
-                    #logging.debug("skip link %s" % _fullname)
-                    continue
-                if not os.path.isfile(_fullname):
-                    logging.debug("skip special %s" % _fullname)
-                    continue
+                _file = indexer.file_info(path_join(_dir, fname))
                 
+                if not _file.is_normal_file():
+                    continue
+
                 try:
                     _t = time.time()
-                    _filesize, _ = self._add_file(_fullname)
+                    self._add_file(_file)
                     _t = time.time() - _t
-                    _total_size += _filesize
+                    _total_size += _file.size()
                 except read_permission_error:
                     logging.warn('cannot handle "%s": read permission denied', 
-                                 _fullname)
+                                 _file.path())
                 except KeyboardInterrupt:
                     raise
                 
                 _file_count += 1
                 
-                if _filesize >= 10 ** 6:
+                if _file.size() >= 10 ** 6:
                     logging.debug("%s: %s bytes, %.1fms, %.2fMb/ms",
                                   fname,
-                                  '{0:,}'.format(_filesize), _t * 1000,
-                                  _filesize / (2 << 20) / (_t  * 1000))
+                                  '{0:,}'.format(_file.size()), _t * 1000,
+                                  _file.size() / (2 << 20) / (_t  * 1000))
                 
 
                 if _file_count % 1000 == 0:
