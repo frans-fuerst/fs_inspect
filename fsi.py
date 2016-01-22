@@ -10,6 +10,7 @@ import hashlib
 import functools
 import subprocess
 import contextlib
+import shutil
 
 # todo: test: .fsi-content is equal Python2/3
 # todo: test: .fsi-content is equal with or without abortion CTRL-C-Abbruch
@@ -31,6 +32,20 @@ class read_permission_error(Exception):
 def fopen(filename, mode='r', buffering=1):
     try:
         return open(filename, mode, buffering)
+    except IOError as ex:
+        if ex.errno == 2:
+            raise file_not_found_error()
+        elif ex.errno == 13:
+            raise read_permission_error()
+        raise
+    
+def rmdirs(path):
+    try:
+        shutil.rmtree(path)
+    except OSError as ex:
+        if ex.errno == 2:
+            raise file_not_found_error()
+        raise
     except IOError as ex:
         if ex.errno == 2:
             raise file_not_found_error()
