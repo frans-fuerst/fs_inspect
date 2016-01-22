@@ -11,6 +11,7 @@ import functools
 import subprocess
 import contextlib
 import shutil
+import argparse
 
 # todo: test: .fsi-content is equal Python2/3
 # todo: test: .fsi-content is equal with or without abortion CTRL-C-Abbruch
@@ -38,7 +39,7 @@ def fopen(filename, mode='r', buffering=1):
         elif ex.errno == 13:
             raise read_permission_error()
         raise
-    
+
 def rmdirs(path):
     try:
         shutil.rmtree(path)
@@ -84,7 +85,7 @@ else:
         json.dump(data, fopen(filename, 'w'), encoding='utf-8',
                   sort_keys=True,
                   indent=4, separators=(',', ': '))
-        
+
     def path_join(path1, path2):
         return os.path.join(path1, path2).decode('utf-8')
 
@@ -92,7 +93,7 @@ else:
 def sha1_external(filename):
     ''' fast with large files '''
     output = subprocess.Popen(
-        ["sha1sum", filename.encode('utf-8')], 
+        ["sha1sum", filename.encode('utf-8')],
         stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
     # todo: check plausibility (length, "permission denied", etc)
     return output.split(' ')[0]
@@ -110,45 +111,48 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
 
 
 class file_info:
-    
+
     def __init__(self, filename, word_store):
         assert filename[0] == '/'
         self._fullname = filename
         self._size = None
         self._packed_path = None
-        self._sha1 = None 
+        self._sha1 = None
         self._mdate = None
         self._word_store = word_store
-        
+
     def path(self):
         return self._fullname
+
+    def basename(self):
+        return os.path.basename(self._fullname)
 
     def size(self):
         if self._size is None:
             self._size = os.path.getsize(self._fullname)
         return self._size
-    
+
     def mdate(self):
         if self._mdate is None:
             self._mdate = str(int(os.path.getmtime(self._fullname) * 100))
         return self._mdate
-    
+
     @staticmethod
     def fast_sha1(filename, size):
         if size < 50000:
             return sha1_internal(filename)
         else:
             return sha1_external(filename)
-        
+
     def hash_sha1(self):
         if self._sha1 is None:
             self._sha1 = file_info.fast_sha1(self._fullname, self.size())
         return self._sha1
-    
+
     def is_normal_file(self):
-        return (os.path.isfile(self._fullname) and 
+        return (os.path.isfile(self._fullname) and
                 not os.path.islink(self._fullname))
-    
+
     def packed_path(self):
         ''' turn "/home/user/some/directory" into index based string
             e.g. "2.7.4.9"'''
@@ -156,15 +160,15 @@ class file_info:
         if self._packed_path is None:
             assert self._word_store is not None
             self._packed_path = '.'.join(
-                (str(self._word_store.get_index(n)) 
+                (str(self._word_store.get_index(n))
                  for n in self._fullname[1:].split('/')))
         return self._packed_path
 
 
 class indexer:
-    
+
     class name_component_store:
-        
+
         def __init__(self):
             self._idx_to_word = {}
             self._word_to_idx = {}
@@ -182,13 +186,13 @@ class indexer:
             self._word_to_idx[word] = _index
             self._idx_to_word[_index] = word
             return _index
-        
+
         def restore(self, packed_path):
             ''' opposite of _get_name_components(): restores the original path
                 on the filesystem '''
             return '/' + '/'.join((self[i]
                              for i in (int(c) for c in packed_path.split('.'))))
-        
+
         def __getitem__(self, index):
             return self._idx_to_word[index]
 
@@ -224,11 +228,12 @@ class indexer:
 
     def __init__(self, storage_dir='~/.fsi'):
         _storage_dir = os.path.expanduser(storage_dir)
+        self._ignore_pattern = ('.git', '.svn', '__pycache__', '.fsi')
         try:
             make_dirs(_storage_dir)
         except path_exists_error:
             pass
-        
+
         self._bysize_dir = os.path.join(_storage_dir, 'sizes')
         self._name_file = os.path.join(_storage_dir, 'name_parts.txt')
         self._name_component_store = indexer.name_component_store()
@@ -267,14 +272,14 @@ class indexer:
         _lines = (l.strip().split() for l in fopen(filename).readlines())
         # return ((h.strip(), d.strip()) for h, d in _lines)
         return {h.strip(): d.strip() for h, d in _lines}
-    
+
     @staticmethod
     def _write_file_reference(file_obj, file_instance):
         file_obj.write(file_instance.packed_path())
         file_obj.write(" ")
         file_obj.write(file_instance.mdate())
         file_obj.write("\n")
-        
+
     def _get_size_path(self, file_instance):
         ''' returns a tuple with a path representing the file's size and the
             status of the path.
@@ -283,9 +288,9 @@ class indexer:
             several file information.
         '''
         _result = os.path.join(
-            self._bysize_dir, 
+            self._bysize_dir,
             '/'.join('%d' % file_instance.size()))
-        
+
         try:
             make_dirs(_result)
             return (_result, None)
@@ -302,16 +307,16 @@ class indexer:
         _packed_path = file_instance.packed_path()
 
         if DEBUG_MODE:
-            assert (self._name_component_store.restore(_packed_path) == 
+            assert (self._name_component_store.restore(_packed_path) ==
                     file_instance.path())
-            
+
         # logging.debug("%s => %s", filename, _packed_path)
         # print(_packed_path, _time)
-        
+
         if DEBUG_MODE:
-            assert (sha1_internal(file_instance.path()) == 
+            assert (sha1_internal(file_instance.path()) ==
                     sha1_external(file_instance.path()))
-    
+
         # === no state changing operations before
         # === red exception safety line ===============================
         # === no exceptions after
@@ -332,12 +337,12 @@ class indexer:
                     # to turn this entry into a multi-entry
                     #print('collision')
                     indexer._promote_to_multi(
-                        _size_path, 
+                        _size_path,
                         file_info(
-                            self._name_component_store.restore(_other_packed_path), 
-                            self._name_component_store), 
+                            self._name_component_store.restore(_other_packed_path),
+                            self._name_component_store),
                         file_instance)
-                    
+
             elif _state[0] == 'multi':
                 # we found a file size folder which contains one or more file
                 # references with hashes and modification date so we have to
@@ -353,12 +358,12 @@ class indexer:
         '''
         # todo raise if any hash cannot be computed
         # todo raise if second file does not exist
-        
+
         # === red exception safety line ========================================
-        
+
         dir_info_fn = os.path.join(size_path, 'dirinfo')
         if new_file.hash_sha1() == other_file.hash_sha1():
-            logging.debug('found identical: %s %s', 
+            logging.debug('found identical: %s %s',
                           new_file.path(), other_file.path())
             hash_fn = os.path.join(size_path, new_file.hash_sha1())
             with wopen(dir_info_fn, 'w') as fd, wopen(hash_fn, 'w') as fh1:
@@ -374,12 +379,12 @@ class indexer:
                 fd.write('multi')
                 indexer._write_file_reference(fh1, other_file)
                 indexer._write_file_reference(fh2, new_file)
-                
-        os.symlink(other_file.hash_sha1(), 
+
+        os.symlink(other_file.hash_sha1(),
                    os.path.join(size_path, other_file.packed_path()))
         os.symlink(new_file.hash_sha1(),
                    os.path.join(size_path, new_file.packed_path()))
-    
+
     @staticmethod
     def _update_multi(size_path, file_instance):
         ''' we have to update a given dirinfo file. with a given file
@@ -389,7 +394,7 @@ class indexer:
 
         assert os.path.exists(os.path.join(size_path, 'dirinfo'))
         # assert os.path.exists(_link_to_hash)
-        
+
         try:
             _hashed_files = indexer._hashed_files(_link_to_hash)
         except file_not_found_error:
@@ -400,80 +405,124 @@ class indexer:
             os.symlink(file_instance.hash_sha1(),
                        os.path.join(size_path, file_instance.packed_path()))
             return
-        
+
         if file_instance.packed_path() in _hashed_files:
             # check file mdate
             if _hashed_files[file_instance.packed_path()] == file_instance.mdate():
                 # file reference is up to date - nothing to do
                 pass
             else:
-                # hash and link correspond but the file could have been altered 
+                # hash and link correspond but the file could have been altered
                 # since the hash has changed
                 # assert False
                 pass
-                
+
         else:
             # the current file is not contained in the respective hash file
             # should this happen? there should be no link then
             pass
 
-    def add(self, path):
-        if not os.path.exists(path):
-            return
-        _file_count = 0
-        _perf_measure_t = time.time()
-        _total_size = 0
-        _ignore_pattern = ('.git', '.svn', '__pycache__', '.fsi')
-
+    def _walk(self, path, callback):
         for (_dir, _dirs, files) in os.walk(path, topdown=True):
-            _dirs[:] = [d for d in _dirs if d not in _ignore_pattern]
+            _dirs[:] = [d for d in _dirs if d not in self._ignore_pattern]
 
-            _dir = os.path.abspath(_dir)
+            _dir = os.path.realpath(_dir)
             for fname in files:
                 _file = file_info(path_join(_dir, fname), self._name_component_store)
-                
+
                 if not _file.is_normal_file():
                     continue
+                callback(_file)
 
-                try:
-                    _t = time.time()
-                    self._add_file(_file)
-                    _t = time.time() - _t
-                    _total_size += _file.size()
-                except read_permission_error:
-                    logging.warn('cannot handle "%s": read permission denied', 
-                                 _file.path())
-                except KeyboardInterrupt:
-                    raise
-                
-                _file_count += 1
-                
-                if _file.size() >= 10 ** 6:
-                    logging.debug("%s: %s bytes, %.1fms, %.2fMb/ms",
-                                  fname,
-                                  '{0:,}'.format(_file.size()), _t * 1000,
-                                  _file.size() / (2 << 20) / (_t  * 1000))
-                
+    def add(self, path):
+        assert os.path.exists(path)
 
-                if _file_count % 1000 == 0:
-                    _t = time.time()
-                    logging.debug("performance info: #files:%d, %.2fms/file, #words:%d",
-                        _file_count,
-                        (_t - _perf_measure_t),
-                        len(self._name_component_store) / 2)
-                    _perf_measure_t = _t
+        _result = {"file_count": 0,
+                   "total_size": 0}
 
+        def file_adder(file_instance, stats):
+            try:
+                _t = time.time()
+                self._add_file(file_instance)
+                _t = time.time() - _t
+                stats['total_size'] += file_instance.size()
+            except read_permission_error:
+                logging.warn('cannot handle "%s": read permission denied',
+                             file_instance.path())
+            except KeyboardInterrupt:
+                raise
+
+            stats['file_count'] += 1
+
+            if file_instance.size() >= 10 ** 6:
+                logging.debug("%s: %s bytes, %.1fms, %.2fMb/ms",
+                              file_instance.basename(),
+                              '{0:,}'.format(file_instance.size()), _t * 1000,
+                              file_instance.size() / (2 << 20) / (_t  * 1000))
+
+        self._walk(path, lambda x: file_adder(x, _result))
 
         logging.info("added %d files with a total of %s bytes",
-                     _file_count, '{0:,}'.format(_total_size))
+                     _result['file_count'],
+                     '{0:,}'.format(_result['total_size']))
+        return _result
 
+    def diff(self, dir1, dir2):
+        _dir1 = os.path.realpath(dir1)
+        _dir2 = os.path.realpath(dir2)
+        assert os.path.isdir(_dir1)
+        assert os.path.isdir(_dir2)
+        assert _dir1 != _dir2
+        assert not (_dir1.startswith(_dir2) or _dir2.startswith(_dir1))
+
+        def _dir_differ(file_instance):
+            _size_path, _state = self._get_size_path(file_instance)
+            _packed_path = file_instance.packed_path()
+
+        self._walk(_dir1, _dir_differ)
+        self._walk(_dir2, _dir_differ)
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
+    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser.add_argument('--verbose', '-v', action='count', default = 0)
+    parser.add_argument('--debug', '-d', action='store_true')
+    parser.add_argument('--const', '-c', action='store_true')
+    parser.add_argument('--storage-dir', '-s', default='~/.fsi')
+    parser.add_argument('COMMAND')
+    parser.add_argument('PATH', nargs='+')
+
+    args = parser.parse_args()
+
+    print(args)
+
+    if args.debug:
+        DEBUG_MODE = True
+
+    _level = logging.WARN
+    if args.verbose >= 1:
+        _level = logging.INFO
+    if args.verbose >= 2:
+        _level = logging.DEBUG
+
+    logging.basicConfig(level=_level)
     logging.debug('.'.join((str(e) for e in sys.version_info)))
 
-    try:
-        with indexer() as p:
-            p.add(sys.argv[1])
-    except KeyboardInterrupt:
-        print("aborted")
+    if args.COMMAND == 'add':
+        try:
+            with indexer(args.storage_dir) as _indexer:
+                for p in args.PATH:
+                    logging.info("ADD to index: '%s'", p)
+                    _indexer.add(p)
+        except KeyboardInterrupt:
+            print("aborted")
+    elif args.COMMAND == 'check-dups':
+        pass
+    elif args.COMMAND == 'diff':
+        if len(args.PATH) != 2:
+            print("please provide exactly 2 directories to compare")
+        with indexer(args.storage_dir) as _indexer:
+            logging.info("DIFF directories '%s' and '%s'",
+                         args.PATH[0], args.PATH[1])
+            _indexer.diff(args.PATH[0], args.PATH[1])
+    else:
+        pass
