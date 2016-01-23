@@ -1,24 +1,44 @@
 fs_inspect - understand your filesystem
 =======================================
 
-fs_tidify is a command line tool designed to quickly retrieve information
+`fs_inspect` is a command line tool designed to quickly retrieve information
 about your files and folders which help you to get rid of doublettes and
 find out what you should make backups of.
 
-For example you can find out which files inside a given folder you should
-make a backup of
+Key features are:
 
-    `fsi finduniques ./some/folder`
-
-Or you could find doublettes inside a given folder:
-
-    `fsi doublettes ./some/folder`
-
-fs_tidify is content sensitive so renaming or touching files won't make them
-treated as different.
+* when comparing folders the file content matters - not the directory structure
+* once indexed a folder can be processed very quickly
+* platform independent
 
 
-fs_tidify aims at answering the following questions:
+*Development status*: currently the `add` command is working on a experimental 
+basis, `diff`, `check-dups` and `heck-backup` are expected to work soon.
+
+
+Here are some examples for how you can youse `fs_inspect` (or `fsi` for short):
+
+    `fsi add ./some/folder`
+
+This will inspect the folder's content using sha1 checksums where needed and
+store the information in your filesystem.
+
+    `fsi diff ./some/folder ./some_other/folder`
+
+Compare the two folders contents - no matter how the folder structure looks like
+and how the files are named. You will get two lists of files which are contained
+in each of the folders and not in the other.
+
+    `fsi check-dups ./some/folder`
+
+Lists all files located in `./some/folder` which have duplicates somewhere.
+
+    `fsi check-backup ./some/folder`
+
+Acts like `check-dups` but will report every file which has backup somewhere.
+
+
+fs_inspect aims at answering the following questions:
 
 * is there anything in a given directory without a recent backup?
 * are there doublettes of a given file or a number of files apart from 

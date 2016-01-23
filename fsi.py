@@ -14,8 +14,8 @@ import shutil
 import argparse
 
 # todo: test: .fsi-content is equal Python2/3
-# todo: test: .fsi-content is equal with or without abortion CTRL-C-Abbruch
-# todo: test: .fsi-Inhalt gleich nach 1. und 2. Lauf
+# todo: test: .fsi-content is equal with or without abortion via CTRL-C
+# todo: test: .fsi-content is equal after 1st and 2nd run
 # todo: if file content/size has changed old reference has to be deleted
 # todo: introduce a corresponding directory based search folder
 
@@ -475,12 +475,26 @@ class indexer:
         assert _dir1 != _dir2
         assert not (_dir1.startswith(_dir2) or _dir2.startswith(_dir1))
 
-        def _dir_differ(file_instance):
+        def _dir_differ(file_instance, other_dir):
             _size_path, _state = self._get_size_path(file_instance)
             _packed_path = file_instance.packed_path()
+            if _state is None:
+                logging.warn('file "%s" is not registered. '
+                             'is the directory added?', file_instance.path())
+            else:
+                if _state[0] == 'single':
+                    logging.warn('single: %s', file_instance.path())
 
-        self._walk(_dir1, _dir_differ)
-        self._walk(_dir2, _dir_differ)
+                elif _state[0] == 'multi':
+                    # todo: check if a copy is located in other_dir
+                    pass
+                else:
+                    # everything else should not happen
+                    assert False
+
+        self._walk(_dir1, lambda x: _dir_differ(x, _dir2))
+        self._walk(_dir2, lambda x: _dir_differ(x, _dir1))
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process some integers.')
@@ -492,8 +506,6 @@ if __name__ == '__main__':
     parser.add_argument('PATH', nargs='+')
 
     args = parser.parse_args()
-
-    print(args)
 
     if args.debug:
         DEBUG_MODE = True
