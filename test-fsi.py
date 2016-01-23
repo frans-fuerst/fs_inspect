@@ -15,7 +15,6 @@ def test_fsi():
     with fsi.indexer(storage_dir=_storage_dir) as i:
         assert os.path.isdir(_storage_dir)
         i.add('.')
-    assert False
     
 if __name__ == '__main__':
     test_fsi()

@@ -148,6 +148,9 @@ class file_info:
         if self._sha1 is None:
             self._sha1 = file_info.fast_sha1(self._fullname, self.size())
         return self._sha1
+    
+    def hash_file_path(self, size_path):
+        return os.path.join(size_path, self.hash_sha1())
 
     def is_normal_file(self):
         return (os.path.isfile(self._fullname) and
@@ -302,6 +305,27 @@ class indexer:
                 return (_result, None)
                 # todo: assert existing hash files
 
+    def _get_state(self, file_instance):
+        ''' checks whether the file is indexed and it has duplicates 
+        '''
+        _size_path, _state = self._get_size_path(file_instance)
+        _packed_path = file_instance.packed_path()
+        
+        if _state is None:
+            return False, None, None
+        else:
+            if _state[0] == 'single':
+                return True, True, []
+            elif _state[0] == 'multi':
+                try:
+                    _hashed_files = indexer._hashed_files(
+                        os.path.join(size_path, file_instance.packed_path()))
+                    return True, False, _hashed_files
+                except file_not_found_error:
+                    return True, False, []
+            else:
+                assert False
+        
     def _add_file(self, file_instance):
         _size_path, _state = self._get_size_path(file_instance)
         _packed_path = file_instance.packed_path()
@@ -389,21 +413,20 @@ class indexer:
     def _update_multi(size_path, file_instance):
         ''' we have to update a given dirinfo file. with a given file
             specification'''
-
-        _link_to_hash = os.path.join(size_path, file_instance.packed_path())
-
         assert os.path.exists(os.path.join(size_path, 'dirinfo'))
-        # assert os.path.exists(_link_to_hash)
+
+        # symlink name to hash file e.g. /2/3/7/2/2.6.1.23 -> 410ae0d2bcadca8..
+        _composite_path = os.path.join(size_path, file_instance.packed_path())
 
         try:
-            _hashed_files = indexer._hashed_files(_link_to_hash)
+            # try to read list of file with same hash - might fail when no 
+            # duplicate file has been registered yet
+            _hashed_files = indexer._hashed_files(_composite_path)
         except file_not_found_error:
             # file does not exist - create it with one entry
-            hash_fn = os.path.join(size_path, file_instance.hash_sha1())
-            with wopen(hash_fn, 'w') as fh:
+            with wopen(file_instance.hash_file_path(size_path), 'w') as fh:
                 indexer._write_file_reference(fh, file_instance)
-            os.symlink(file_instance.hash_sha1(),
-                       os.path.join(size_path, file_instance.packed_path()))
+            os.symlink(file_instance.hash_sha1(), _composite_path)
             return
 
         if file_instance.packed_path() in _hashed_files:
@@ -476,21 +499,14 @@ class indexer:
         assert not (_dir1.startswith(_dir2) or _dir2.startswith(_dir1))
 
         def _dir_differ(file_instance, other_dir):
-            _size_path, _state = self._get_size_path(file_instance)
-            _packed_path = file_instance.packed_path()
-            if _state is None:
+            _registered, _, _duplicates = self._get_state(file_instance)
+            if not _registered:
                 logging.warn('file "%s" is not registered. '
                              'is the directory added?', file_instance.path())
+            elif len(_duplicates) == 0:
+                logging.warn('single: %s', file_instance.path())
             else:
-                if _state[0] == 'single':
-                    logging.warn('single: %s', file_instance.path())
-
-                elif _state[0] == 'multi':
-                    # todo: check if a copy is located in other_dir
-                    pass
-                else:
-                    # everything else should not happen
-                    assert False
+                assert False
 
         self._walk(_dir1, lambda x: _dir_differ(x, _dir2))
         self._walk(_dir2, lambda x: _dir_differ(x, _dir1))
