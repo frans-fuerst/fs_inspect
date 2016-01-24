@@ -30,6 +30,9 @@ class file_not_found_error(Exception):
 class read_permission_error(Exception):
     pass
 
+class not_indexed_error(Exception):
+    pass
+
 def fopen(filename, mode='r', buffering=1):
     try:
         return open(filename, mode, buffering)
@@ -112,7 +115,7 @@ def sha1_internal(filename, chunksize=2**15, bufsize=-1):
 
 class file_info:
 
-    def __init__(self, filename, word_store):
+    def __init__(self, filename, word_store=None):
         assert filename[0] == '/'
         self._fullname = filename
         self._size = None
@@ -148,7 +151,7 @@ class file_info:
         if self._sha1 is None:
             self._sha1 = file_info.fast_sha1(self._fullname, self.size())
         return self._sha1
-    
+
     def hash_file_path(self, size_path):
         return os.path.join(size_path, self.hash_sha1())
 
@@ -162,9 +165,7 @@ class file_info:
         #todo: assert: '/{}'" not in path
         if self._packed_path is None:
             assert self._word_store is not None
-            self._packed_path = '.'.join(
-                (str(self._word_store.get_index(n))
-                 for n in self._fullname[1:].split('/')))
+            self._packed_path = self._word_store.get_packed(self._fullname)
         return self._packed_path
 
 
@@ -180,15 +181,22 @@ class indexer:
         def __len__(self):
             return self._size
 
-        def get_index(self, word):
+        def _get_index(self, word, const):
             assert word != ''
             if word in self._word_to_idx:
                 return self._word_to_idx[word]
+            if const:
+                raise not_indexed_error()
             _index = self._size
             self._size += 1
             self._word_to_idx[word] = _index
             self._idx_to_word[_index] = word
             return _index
+
+        def get_packed(self, path, const=False):
+            return '.'.join(
+                (str(self._get_index(n, const))
+                 for n in path[1:].split('/')))
 
         def restore(self, packed_path):
             ''' opposite of _get_name_components(): restores the original path
@@ -306,11 +314,11 @@ class indexer:
                 # todo: assert existing hash files
 
     def _get_state(self, file_instance):
-        ''' checks whether the file is indexed and it has duplicates 
+        ''' checks whether the file is indexed and it has duplicates
         '''
         _size_path, _state = self._get_size_path(file_instance)
         _packed_path = file_instance.packed_path()
-        
+
         if _state is None:
             return False, None, None
         else:
@@ -319,13 +327,13 @@ class indexer:
             elif _state[0] == 'multi':
                 try:
                     _hashed_files = indexer._hashed_files(
-                        os.path.join(size_path, file_instance.packed_path()))
+                        os.path.join(_size_path, file_instance.packed_path()))
                     return True, False, _hashed_files
                 except file_not_found_error:
                     return True, False, []
             else:
                 assert False
-        
+
     def _add_file(self, file_instance):
         _size_path, _state = self._get_size_path(file_instance)
         _packed_path = file_instance.packed_path()
@@ -419,7 +427,7 @@ class indexer:
         _composite_path = os.path.join(size_path, file_instance.packed_path())
 
         try:
-            # try to read list of file with same hash - might fail when no 
+            # try to read list of file with same hash - might fail when no
             # duplicate file has been registered yet
             _hashed_files = indexer._hashed_files(_composite_path)
         except file_not_found_error:
@@ -495,10 +503,12 @@ class indexer:
         _dir2 = os.path.realpath(dir2)
         assert os.path.isdir(_dir1)
         assert os.path.isdir(_dir2)
-        assert _dir1 != _dir2
-        assert not (_dir1.startswith(_dir2) or _dir2.startswith(_dir1))
+        assert (_dir1 != _dir2
+                ), "directories must not be same"
+        assert (not (_dir1.startswith(_dir2) or _dir2.startswith(_dir1))
+                ), "directories must not be subdirectories of each other"
 
-        def _dir_differ(file_instance, other_dir):
+        def _dir_differ(file_instance, other_dir, result):
             _registered, _, _duplicates = self._get_state(file_instance)
             if not _registered:
                 logging.warn('file "%s" is not registered. '
@@ -506,10 +516,47 @@ class indexer:
             elif len(_duplicates) == 0:
                 logging.warn('single: %s', file_instance.path())
             else:
-                assert False
+                ''' the file has at least one duplicate - we now have to check
+                    if at least one of them is located in `other_dir`'''
+                _file_in_other_dir = False
+                for f, d in _duplicates.items():
+                    if not f.startswith(other_dir):
+                        continue
+                    _file = file_info(self._name_component_store.restore(f))
 
-        self._walk(_dir1, lambda x: _dir_differ(x, _dir2))
-        self._walk(_dir2, lambda x: _dir_differ(x, _dir1))
+                    if not _file.is_normal_file():
+                        logging.warn('possible duplicate invalid: %s', _file.path())
+                        continue
+                    if not _file.mdate() == d:
+                        logging.warn('possible duplicate might have been modified: %s', _file.path())
+                        continue
+                    _file_in_other_dir = True
+                    break
+
+                if not _file_in_other_dir:
+                    result.append(file_instance)
+
+        _not_in_1 = []
+        _not_in_2 = []
+
+        self._walk(_dir1, lambda _file: _dir_differ(
+            _file,
+            self._name_component_store.get_packed(_dir2, const=True) + '.',
+            _not_in_2))
+
+        self._walk(_dir2, lambda _file: _dir_differ(
+            _file,
+            self._name_component_store.get_packed(_dir1, const=True) + '.',
+            _not_in_1))
+
+        if len(_not_in_2) > 0:
+            print('only in "%s":' % _dir1)
+            for d in _not_in_2:
+                print("    %s" % d.path())
+        if len(_not_in_1) > 0:
+            print('only in "%s":' % _dir2)
+            for d in _not_in_1:
+                print("    %s" % d.path())
 
 
 if __name__ == '__main__':
