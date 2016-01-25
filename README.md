@@ -47,3 +47,20 @@ fs_inspect aims at answering the following questions:
 * are there files with same content but different names?
 * are there files with same names but different content?
 
+
+In comparison to a usual directory differ `fsi` behaves different in some 
+ways. Please note that `fsi` does not aim at being a better directory differ
+(yet) but wants to give a rough hint where to have a closer look without
+struggling with restructured directories or renamed files. Here are some
+differences in behavior you should know:
+
+* when handling files **symbolic links are ignored**
+* files with **size 0 are ignored**
+* `fsi` only recognizes equal files on a *binary basis* (using a hash of a
+  file). Files which only differ in spaces etc. are just identified as 
+  different. Please use tools like `meld`, `hexdiff` etc. for further 
+  investigation.
+
+
+
+
