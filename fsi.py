@@ -572,6 +572,7 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', '-v', action='count', default = 0)
     parser.add_argument('--debug', '-d', action='store_true')
     parser.add_argument('--const', '-c', action='store_true')
+    parser.add_argument('--rebuild', '-r', action='store_true')
     parser.add_argument('--storage-dir', '-s', default='~/.fsi')
     parser.add_argument('COMMAND')
     parser.add_argument('PATH', nargs='+')
@@ -589,7 +590,10 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=_level)
     logging.debug('.'.join((str(e) for e in sys.version_info)))
-
+    
+    if args.rebuild:
+        rmdirs(os.path.expanduser(args.storage_dir))
+        
     if args.COMMAND == 'add':
         try:
             with indexer(args.storage_dir) as _indexer:
