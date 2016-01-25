@@ -31,7 +31,8 @@ class read_permission_error(Exception):
     pass
 
 class not_indexed_error(Exception):
-    pass
+    def __init__(self, file_instance=None):
+        self.file_info = file_instance
 
 def fopen(filename, mode='r', buffering=1):
     try:
@@ -124,6 +125,9 @@ class file_info:
         self._mdate = None
         self._word_store = word_store
 
+    def __str__(self):
+        return self._fullname
+    
     def path(self):
         return self._fullname
 
@@ -463,8 +467,12 @@ class indexer:
 
                 if not _file.is_normal_file():
                     continue
-                callback(_file)
-
+                try:
+                    callback(_file)
+                except not_indexed_error as ex:
+                    ex.file_info = _file
+                    raise
+                
     def add(self, path):
         assert os.path.exists(path)
 
@@ -598,6 +606,10 @@ if __name__ == '__main__':
         with indexer(args.storage_dir) as _indexer:
             logging.info("DIFF directories '%s' and '%s'",
                          args.PATH[0], args.PATH[1])
-            _indexer.diff(args.PATH[0], args.PATH[1])
+            try:
+                _indexer.diff(args.PATH[0], args.PATH[1])
+            except not_indexed_error as ex:
+                print('file "%s" is not up to date - please re-index the '
+                      'according folder using `fsi add`' % ex.file_info.path())
     else:
         pass
