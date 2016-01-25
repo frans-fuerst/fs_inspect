@@ -1,27 +1,34 @@
 fs_inspect - understand your filesystem
 =======================================
 
-`fs_inspect` is a command line tool designed to quickly retrieve information
-about your files and folders which help you to get rid of doublettes and
-find out what you should make backups of.
+`fs_inspect` (or `fsi` for short) is a command line tool which quickly gives you
+an overview about wanted or unwanted redundancy in your folders and whole file 
+system. Are your backups complete? Can you savely remove a folder to free space 
+without deleting unique files?
 
-Key features are:
+While directory comparing tools like `diff` or `meld` can precisely tell you
+differences between directories they fail when the directory structure or file
+names change in only one of the directories or when you simply can't just
+compare two folders because your files are distriubted over the whole file system.
+
+
+Here are some of `fs_inspect`'s key features:
 
 * when comparing folders the file content matters - not the directory structure
 * once indexed a folder can be processed very quickly
-* platform independent
+* `fs_inspect` platform independent among any OS that can provide Python2.7+
 
 
-*Development status*: currently the `add` command is working on a experimental 
-basis, `diff`, `check-dups` and `heck-backup` are expected to work soon.
+*Development status*: currently the `add` and `diff` commands are working on a
+experimental basis, `check-dups` and `check-backup` are expected to work soon.
 
 
-Here are some examples for how you can youse `fs_inspect` (or `fsi` for short):
+Here are some examples for how you can youse `fs_inspect`:
 
     `fsi add ./some/folder`
 
-This will inspect the folder's content using sha1 checksums where needed and
-store the information in your filesystem.
+This will inspect a directory's folder's content using sha1 checksums where 
+needed and store the information in your filesystem.
 
     `fsi diff ./some/folder ./some_other/folder`
 
@@ -60,7 +67,4 @@ differences in behavior you should know:
   file). Files which only differ in spaces etc. are just identified as 
   different. Please use tools like `meld`, `hexdiff` etc. for further 
   investigation.
-
-
-
 
