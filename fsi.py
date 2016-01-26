@@ -127,7 +127,7 @@ class file_info:
 
     def __str__(self):
         return self._fullname
-    
+
     def path(self):
         return self._fullname
 
@@ -181,6 +181,7 @@ class indexer:
             self._idx_to_word = {}
             self._word_to_idx = {}
             self._size = 0
+            self._dirty = False
 
         def __len__(self):
             return self._size
@@ -191,6 +192,7 @@ class indexer:
                 return self._word_to_idx[word]
             if const:
                 raise not_indexed_error()
+            self._dirty = True
             _index = self._size
             self._size += 1
             self._word_to_idx[word] = _index
@@ -212,7 +214,9 @@ class indexer:
             return self._idx_to_word[index]
 
         def save(self, filename):
-            dump_json(self._word_to_idx, filename)
+            if self._dirty:
+                dump_json(self._word_to_idx, filename)
+            self._dirty = False
 
         def load(self, filename):
             _idx2word = {}
@@ -466,13 +470,19 @@ class indexer:
                 _file = file_info(path_join(_dir, fname), self._name_component_store)
 
                 if not _file.is_normal_file():
+                    ''' we ignore symlinks, device files, pipes, etc.'''
                     continue
+
+                if _file.size() == 0:
+                    ''' we even ignore empty files'''
+                    continue
+
                 try:
                     callback(_file)
                 except not_indexed_error as ex:
                     ex.file_info = _file
                     raise
-                
+
     def add(self, path):
         assert os.path.exists(path)
 
@@ -519,8 +529,7 @@ class indexer:
         def _dir_differ(file_instance, other_dir, result):
             _registered, _, _duplicates = self._get_state(file_instance)
             if not _registered:
-                logging.warn('file "%s" is not registered. '
-                             'is the directory added?', file_instance.path())
+                raise not_indexed_error(file_instance)
             elif len(_duplicates) == 0:
                 logging.warn('single: %s', file_instance.path())
             else:
@@ -566,6 +575,72 @@ class indexer:
             for d in _not_in_1:
                 print("    %s" % d.path())
 
+    def check_redundancy(self, directory, invert=False):
+        _dir = os.path.realpath(directory)
+        assert os.path.isdir(_dir)
+
+        def _dup_finder(file_instance, packed_dir, invert, result):
+            ''' will check file_instance for duplicates _outside_ of
+                <packed_dir> if <invert> is False <result> will contain the
+                list of files which have copies outside <packed_dir>
+                if <invert> is True, <result> will contain the list of files
+                which are only located in <packed_dir> (where it might be
+                duplicate)
+            '''
+            _registered, _, _duplicates = self._get_state(file_instance)
+            if not _registered:
+                raise not_indexed_error(file_instance)
+            _found = False
+            for p in _duplicates:
+                if p.startswith(packed_dir):
+                    ''' we found a duplicate of <file_instance> which is
+                        located inside of <packed_path>
+                    '''
+                    continue
+                _found = True
+                if not invert:
+                    ''' we found a duplicate outside given direcory.
+                        in case we do an non-inverted search we now know
+                        this file is duplicated and can be added to the result
+                        '''
+                    if not file_instance in result:
+                        result[file_instance] = []
+                    result[file_instance].append(p)
+                else:
+                    break
+
+            if invert:
+                if not _found:
+                    result[file_instance] = None
+
+            return
+
+        _result = {}
+        self._walk(_dir, lambda _file: _dup_finder(
+            _file,
+            self._name_component_store.get_packed(_dir, const=True) + '.',
+            invert,
+            _result))
+
+        if invert:
+            ''' we checked for redundancy for all files'''
+            if len(_result) == 0:
+                print('all files redundant')
+            else:
+                for p in _result:
+                    print(p.path())
+                print('.. without copy')
+        else:
+            ''' we searched for files with redundand copyies'''
+            if len(_result) == 0:
+                print('directory is free of redundancy')
+            else:
+                for p in _result:
+                    print(p.path())
+                    for c in _result[p]:
+                        print("   " + self._name_component_store.restore(c))
+                print('.. are redundant')
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process some integers.')
@@ -573,6 +648,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug', '-d', action='store_true')
     parser.add_argument('--const', '-c', action='store_true')
     parser.add_argument('--rebuild', '-r', action='store_true')
+    parser.add_argument('--invert', '-i', action='store_true')
     parser.add_argument('--storage-dir', '-s', default='~/.fsi')
     parser.add_argument('COMMAND')
     parser.add_argument('PATH', nargs='+')
@@ -590,30 +666,43 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=_level)
     logging.debug('.'.join((str(e) for e in sys.version_info)))
-    
+
     if args.rebuild:
         rmdirs(os.path.expanduser(args.storage_dir))
-        
-    if args.COMMAND == 'add':
-        try:
-            with indexer(args.storage_dir) as _indexer:
-                for p in args.PATH:
-                    logging.info("ADD to index: '%s'", p)
-                    _indexer.add(p)
-        except KeyboardInterrupt:
-            print("aborted")
-    elif args.COMMAND == 'check-dups':
-        pass
-    elif args.COMMAND == 'diff':
-        if len(args.PATH) != 2:
-            print("please provide exactly 2 directories to compare")
-        with indexer(args.storage_dir) as _indexer:
-            logging.info("DIFF directories '%s' and '%s'",
-                         args.PATH[0], args.PATH[1])
+
+    try:
+
+        if args.COMMAND == 'add':
             try:
+                with indexer(args.storage_dir) as _indexer:
+                    for p in args.PATH:
+                        logging.info("ADD to index: '%s'", p)
+                        _indexer.add(p)
+            except KeyboardInterrupt:
+                print("aborted")
+
+        elif args.COMMAND == 'check-dups':
+            with indexer(args.storage_dir) as _indexer:
+                logging.info("check four duplicates in '%s'", args.PATH[0])
+                for d in args.PATH:
+                    _indexer.check_redundancy(d, invert=args.invert)
+
+        elif args.COMMAND == 'check-redundancy':
+            with indexer(args.storage_dir) as _indexer:
+                logging.info("check four duplicates in '%s'", args.PATH[0])
+                for d in args.PATH:
+                    _indexer.check_redundancy(d, invert=True)
+
+        elif args.COMMAND == 'diff':
+            if len(args.PATH) != 2:
+                print("please provide exactly 2 directories to compare")
+            with indexer(args.storage_dir) as _indexer:
+                logging.info("DIFF directories '%s' and '%s'",
+                             args.PATH[0], args.PATH[1])
                 _indexer.diff(args.PATH[0], args.PATH[1])
-            except not_indexed_error as ex:
-                print('file "%s" is not up to date - please re-index the '
-                      'according folder using `fsi add`' % ex.file_info.path())
-    else:
-        pass
+        else:
+            pass
+
+    except not_indexed_error as ex:
+        print('file "%s" is not up to date - please re-index the '
+              'according folder using `fsi add`' % ex.file_info.path())
