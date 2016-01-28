@@ -32,6 +32,7 @@ class read_permission_error(Exception):
 
 class not_indexed_error(Exception):
     def __init__(self, file_instance=None):
+        Exception.__init__(self)
         self.file_info = file_instance
 
 def fopen(filename, mode='r', buffering=1):
@@ -47,10 +48,6 @@ def fopen(filename, mode='r', buffering=1):
 def rmdirs(path):
     try:
         shutil.rmtree(path)
-    except OSError as ex:
-        if ex.errno == 2:
-            raise file_not_found_error()
-        raise
     except IOError as ex:
         if ex.errno == 2:
             raise file_not_found_error()
@@ -207,8 +204,8 @@ class indexer:
         def restore(self, packed_path):
             ''' opposite of _get_name_components(): restores the original path
                 on the filesystem '''
-            return '/' + '/'.join((self[i]
-                             for i in (int(c) for c in packed_path.split('.'))))
+            return '/' + '/'.join((
+                self[i] for i in (int(c) for c in packed_path.split('.'))))
 
         def __getitem__(self, index):
             return self._idx_to_word[index]
@@ -256,9 +253,26 @@ class indexer:
         self._bysize_dir = os.path.join(_storage_dir, 'sizes')
         self._name_file = os.path.join(_storage_dir, 'name_parts.txt')
         self._name_component_store = indexer.name_component_store()
+        self._tracked_dirs_filename = os.path.join(_storage_dir, 'tracked_dirs')
+
+        self._name_component_store.load(self._name_file)
+        self._tracked_directories = self._load_tracked_dir_list()
+
+    def _load_tracked_dir_list(self):
+        try:
+            _result = load_json(self._tracked_dirs_filename)
+        except file_not_found_error:
+            # todo: assert isempty(self._bysize_dir)
+            assert not os.path.exists(self._name_file)
+            _result = []
+
+        assert isinstance(_result, list)
+        return _result
+
+    def _save_tracked_dir_list(self):
+        dump_json(self._tracked_directories, self._tracked_dirs_filename)
 
     def __enter__(self):
-        self._name_component_store.load(self._name_file)
         return self
 
     def __exit__(self, data_type, value, tb):
@@ -274,6 +288,7 @@ class indexer:
             assert _test_store == self._name_component_store
         else:
             self._name_component_store.save(self._name_file)
+        self._save_tracked_dir_list()
 
     @staticmethod
     def _store_single_file(size_path, name):
@@ -325,20 +340,19 @@ class indexer:
         ''' checks whether the file is indexed and it has duplicates
         '''
         _size_path, _state = self._get_size_path(file_instance)
-        _packed_path = file_instance.packed_path()
 
         if _state is None:
             return False, None, None
         else:
             if _state[0] == 'single':
-                return True, True, []
+                return True, True, {}
             elif _state[0] == 'multi':
                 try:
                     _hashed_files = indexer._hashed_files(
                         os.path.join(_size_path, file_instance.packed_path()))
                     return True, False, _hashed_files
                 except file_not_found_error:
-                    return True, False, []
+                    return True, False, {}
             else:
                 assert False
 
@@ -470,11 +484,11 @@ class indexer:
                 _file = file_info(path_join(_dir, fname), self._name_component_store)
 
                 if not _file.is_normal_file():
-                    ''' we ignore symlinks, device files, pipes, etc.'''
+                    # we ignore symlinks, device files, pipes, etc.
                     continue
 
                 if _file.size() == 0:
-                    ''' we even ignore empty files'''
+                    # we even ignore empty files
                     continue
 
                 try:
@@ -484,7 +498,24 @@ class indexer:
                     raise
 
     def add(self, path):
-        assert os.path.exists(path)
+        _path = os.path.realpath(os.path.expanduser(path))
+
+        assert os.path.exists(_path)
+
+        for p in self._tracked_directories:
+            if _path.startswith(p):
+                print('"%s" is already tracked via "%s"' % (path, p))
+                return
+
+        def not_contained(p1, p2):
+            if p1.startswith(p2):
+                print('Already tracked folder "%s" will be replaced' % p1)
+                return False
+            return True
+        self._tracked_directories = [
+            p for p in self._tracked_directories if not_contained(p, _path)]
+
+        self._tracked_directories.append(_path)
 
         _result = {"file_count": 0,
                    "total_size": 0}
@@ -509,7 +540,7 @@ class indexer:
                               '{0:,}'.format(file_instance.size()), _t * 1000,
                               file_instance.size() / (2 << 20) / (_t  * 1000))
 
-        self._walk(path, lambda x: file_adder(x, _result))
+        self._walk(_path, lambda x: file_adder(x, _result))
 
         logging.info("added %d files with a total of %s bytes",
                      _result['file_count'],
@@ -533,8 +564,8 @@ class indexer:
             elif len(_duplicates) == 0:
                 logging.warn('single: %s', file_instance.path())
             else:
-                ''' the file has at least one duplicate - we now have to check
-                    if at least one of them is located in `other_dir`'''
+                # the file has at least one duplicate - we now have to check
+                # if at least one of them is located in `other_dir`
                 _file_in_other_dir = False
                 for f, d in _duplicates.items():
                     if not f.startswith(other_dir):
@@ -542,10 +573,13 @@ class indexer:
                     _file = file_info(self._name_component_store.restore(f))
 
                     if not _file.is_normal_file():
-                        logging.warn('possible duplicate invalid: %s', _file.path())
+                        logging.warn(
+                            'possible duplicate invalid: %s', _file.path())
                         continue
                     if not _file.mdate() == d:
-                        logging.warn('possible duplicate might have been modified: %s', _file.path())
+                        logging.warn(
+                            'possible duplicate might have been modified: %s',
+                            _file.path())
                         continue
                     _file_in_other_dir = True
                     break
@@ -593,16 +627,14 @@ class indexer:
             _found = False
             for p in _duplicates:
                 if p.startswith(packed_dir):
-                    ''' we found a duplicate of <file_instance> which is
-                        located inside of <packed_path>
-                    '''
+                    # we found a duplicate of <file_instance> which is
+                    # located inside of <packed_path>
                     continue
                 _found = True
                 if not invert:
-                    ''' we found a duplicate outside given direcory.
-                        in case we do an non-inverted search we now know
-                        this file is duplicated and can be added to the result
-                        '''
+                    # we found a duplicate outside given direcory.
+                    # in case we do an non-inverted search we now know
+                    # this file is duplicated and can be added to the result
                     if not file_instance in result:
                         result[file_instance] = []
                     result[file_instance].append(p)
@@ -623,7 +655,7 @@ class indexer:
             _result))
 
         if invert:
-            ''' we checked for redundancy for all files'''
+            # we checked for redundancy for all files
             if len(_result) == 0:
                 print('all files redundant')
             else:
@@ -631,7 +663,7 @@ class indexer:
                     print(p.path())
                 print('.. without copy')
         else:
-            ''' we searched for files with redundand copyies'''
+            # we searched for files with redundand copyies
             if len(_result) == 0:
                 print('directory is free of redundancy')
             else:
@@ -641,14 +673,13 @@ class indexer:
                         print("   " + self._name_component_store.restore(c))
                 print('.. are redundant')
 
-
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(description='Process some integers.')
-    parser.add_argument('--verbose', '-v', action='count', default = 0)
-    parser.add_argument('--debug', '-d', action='store_true')
-    parser.add_argument('--const', '-c', action='store_true')
-    parser.add_argument('--rebuild', '-r', action='store_true')
-    parser.add_argument('--invert', '-i', action='store_true')
+    parser.add_argument('--verbose', '-v',     action='count', default = 0)
+    parser.add_argument('--debug', '-d',       action='store_true')
+    parser.add_argument('--const', '-c',       action='store_true')
+    parser.add_argument('--rebuild', '-r',     action='store_true')
+    parser.add_argument('--invert', '-i',      action='store_true')
     parser.add_argument('--storage-dir', '-s', default='~/.fsi')
     parser.add_argument('COMMAND')
     parser.add_argument('PATH', nargs='+')
@@ -656,6 +687,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.debug:
+        global DEBUG_MODE
         DEBUG_MODE = True
 
     _level = logging.WARN
@@ -706,3 +738,6 @@ if __name__ == '__main__':
     except not_indexed_error as ex:
         print('file "%s" is not up to date - please re-index the '
               'according folder using `fsi add`' % ex.file_info.path())
+
+if __name__ == '__main__':
+    main()
