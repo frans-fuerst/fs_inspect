@@ -51,6 +51,7 @@ def main():
         fsdb = fs_db('fst.json')
         for directory in args[1:]:
             logging.info( "%d Mb", (fsdb.register(directory) / 2 ** 20) )
+            fsdb.export_to_fs('fst.export.json')
 
         fsdb.print_statistics()
 
