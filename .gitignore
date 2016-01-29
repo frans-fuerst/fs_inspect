@@ -1,9 +1,8 @@
-*.json
 *~
 ~*
 *.pyc
-*.json
-*.gz
+fsi-storage-*
 .cache
-*.wpu
-fstdb.txt
+.coverage
+htmlcov
+test_fs

@@ -13,12 +13,6 @@ import contextlib
 import shutil
 import argparse
 
-# todo: test: .fsi-content is equal Python2/3
-# todo: test: .fsi-content is equal with or without abortion via CTRL-C
-# todo: test: .fsi-content is equal after 1st and 2nd run
-# todo: if file content/size has changed old reference has to be deleted
-# todo: introduce a corresponding directory based search folder
-
 DEBUG_MODE = False
 
 class path_exists_error(Exception):

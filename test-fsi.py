@@ -4,6 +4,13 @@
 import os
 import coverage
 
+# TODO: test following symlinks to directories
+#       test symlinks to equal directories
+#       test: .fsi-content is equal Python2/3
+#       test: .fsi-content is equal with or without abortion via CTRL-C
+#       test: .fsi-content is equal after 1st and 2nd run
+#       if file content/size has changed old reference has to be deleted
+#       introduce a corresponding directory based search folder
 
 class cov:
     def __enter__(self):
