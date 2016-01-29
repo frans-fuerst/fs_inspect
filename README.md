@@ -14,21 +14,21 @@ compare two folders because your files are distriubted over the whole file syste
 
 Here are some of `fs_inspect`'s key features:
 
-* when comparing folders the file content matters - not the directory structure
+* when comparing folders only the file content matters - not the directory structure
 * once indexed a folder can be processed very quickly
-* `fs_inspect` platform independent among any OS that can provide Python2.7+
+* `fs_inspect` is platform independent among any OS that can provide Python2.7+
 
 
-*Development status*: currently the `add` and `diff` commands are working on a
-experimental basis, `check-dups` and `check-backup` are expected to work soon.
+*Development status*: currently the `add`, `diff` and `check-dups` commands 
+are working on an experimental basis, others are expected to work soon.
 
 
 Here are some examples for how you can youse `fs_inspect`:
 
     `fsi add ./some/folder`
 
-This will inspect a directory's folder's content using sha1 checksums where 
-needed and store the information in your filesystem.
+This will inspect a folder's content using sha1 checksums where needed and 
+store the information in your filesystem.
 
     `fsi diff ./some/folder ./some_other/folder`
 
@@ -47,10 +47,10 @@ Acts like `check-dups` but will report every file which has backup somewhere.
 
 fs_inspect aims at answering the following questions:
 
-* is there anything in a given directory without a recent backup?
+* are there any files in a given directory without a recent backup?
 * are there doublettes of a given file or a number of files apart from 
   intended backups?
-* do two given folders have the same content?
+* do two given folders have the same content? (independently from directory structure)
 * are there files with same content but different names?
 * are there files with same names but different content?
 
