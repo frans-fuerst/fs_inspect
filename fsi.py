@@ -48,6 +48,10 @@ def fopen(filename, mode='r', buffering=1):
 def rmdirs(path):
     try:
         shutil.rmtree(path)
+    except OSError as ex:
+        if ex.errno == 2:
+            raise file_not_found_error()
+        raise
     except IOError as ex:
         if ex.errno == 2:
             raise file_not_found_error()
@@ -500,7 +504,8 @@ class indexer:
     def add(self, path):
         _path = os.path.realpath(os.path.expanduser(path))
 
-        assert os.path.exists(_path)
+        if not os.path.exists(_path):
+            raise file_not_found_error()
 
         for p in self._tracked_directories:
             if _path.startswith(p):
