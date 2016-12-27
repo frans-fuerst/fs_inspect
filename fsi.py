@@ -15,24 +15,28 @@ import argparse
 
 DEBUG_MODE = False
 
-class path_exists_error(Exception):
-    pass
-
-class file_not_found_error(Exception):
-    pass
-
-class read_permission_error(Exception):
-    pass
-
-class not_indexed_error(Exception):
-    def __init__(self, file_instance=None):
+class fsi_error(Exception):
+    def __init__(self):
         Exception.__init__(self)
+
+class path_exists_error(fsi_error):
+    pass
+
+class file_not_found_error(fsi_error):
+    pass
+
+class read_permission_error(fsi_error):
+    pass
+
+class not_indexed_error(fsi_error):
+    def __init__(self, file_instance=None):
+        fsi_error.__init__(self)
         self.file_info = file_instance
 
 def fopen(filename, mode='r', buffering=1):
     try:
         return open(filename, mode, buffering)
-    except IOError as ex:
+    except OSError as ex:
         if ex.errno == 2:
             raise file_not_found_error()
         elif ex.errno == 13:
@@ -43,10 +47,6 @@ def rmdirs(path):
     try:
         shutil.rmtree(path)
     except OSError as ex:
-        if ex.errno == 2:
-            raise file_not_found_error()
-        raise
-    except IOError as ex:
         if ex.errno == 2:
             raise file_not_found_error()
         elif ex.errno == 13:
@@ -255,6 +255,9 @@ class indexer:
 
         self._name_component_store.load(self._name_file)
         self._tracked_directories = self._load_tracked_dir_list()
+
+    def tracked_dir_list(self) -> list:
+        return self._tracked_directories
 
     def _load_tracked_dir_list(self):
         try:
@@ -495,6 +498,15 @@ class indexer:
                     ex.file_info = _file
                     raise
 
+    def _is_tracked(path: str) -> tuple:
+        ''' returns a tuple containing whether or not a given path is already
+            being tracked and which path it's being tracked by
+        '''
+        for p in self._tracked_directories:
+            if _path.startswith(p):
+                return True, p
+        return False, None
+
     def add(self, path):
         _path = os.path.realpath(os.path.expanduser(path))
 
@@ -526,8 +538,8 @@ class indexer:
                 _t = time.time() - _t
                 stats['total_size'] += file_instance.size()
             except read_permission_error:
-                logging.warn('cannot handle "%s": read permission denied',
-                             file_instance.path())
+                logging.warning('cannot handle "%s": read permission denied',
+                                file_instance.path())
             except KeyboardInterrupt:
                 raise
 
@@ -561,7 +573,7 @@ class indexer:
             if not _registered:
                 raise not_indexed_error(file_instance)
             elif len(_duplicates) == 0:
-                logging.warn('single: %s', file_instance.path())
+                logging.warning('single: %s', file_instance.path())
             else:
                 # the file has at least one duplicate - we now have to check
                 # if at least one of them is located in `other_dir`
@@ -572,11 +584,11 @@ class indexer:
                     _file = file_info(self._name_component_store.restore(f))
 
                     if not _file.is_normal_file():
-                        logging.warn(
+                        logging.warning(
                             'possible duplicate invalid: %s', _file.path())
                         continue
                     if not _file.mdate() == d:
-                        logging.warn(
+                        logging.warning(
                             'possible duplicate might have been modified: %s',
                             _file.path())
                         continue
@@ -672,6 +684,14 @@ class indexer:
                         print("   " + self._name_component_store.restore(c))
                 print('.. are redundant')
 
+
+def clear_index(storage_dir: str) -> None:
+    # todo: to be atomic, first move directory, then delete it
+    print('removing %s..' % storage_dir)
+    rmdirs(os.path.expanduser(storage_dir))
+    print('all index removed')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('--verbose', '-v',     action='count', default = 0)
@@ -681,7 +701,7 @@ def main():
     parser.add_argument('--invert', '-i',      action='store_true')
     parser.add_argument('--storage-dir', '-s', default='~/.fsi')
     parser.add_argument('COMMAND')
-    parser.add_argument('PATH', nargs='+')
+    parser.add_argument('PATH', nargs='*')
 
     args = parser.parse_args()
 
@@ -689,7 +709,7 @@ def main():
         global DEBUG_MODE
         DEBUG_MODE = True
 
-    _level = logging.WARN
+    _level = logging.INFO
     if args.verbose >= 1:
         _level = logging.INFO
     if args.verbose >= 2:
@@ -699,18 +719,23 @@ def main():
     logging.debug('.'.join((str(e) for e in sys.version_info)))
 
     if args.rebuild:
-        rmdirs(os.path.expanduser(args.storage_dir))
+        clear_index(args.storage_dir)
 
     try:
+        if args.COMMAND == 'clear':
+            clear_index(args.storage_dir)
 
-        if args.COMMAND == 'add':
-            try:
-                with indexer(args.storage_dir) as _indexer:
-                    for p in args.PATH:
-                        logging.info("ADD to index: '%s'", p)
-                        _indexer.add(p)
-            except KeyboardInterrupt:
-                print("aborted")
+        elif args.COMMAND == 'info':
+            with indexer(args.storage_dir) as _indexer:
+                print('indexed directories:')
+                for i in _indexer.tracked_dir_list():
+                    print("  ", i)
+
+        elif args.COMMAND == 'add':
+            with indexer(args.storage_dir) as _indexer:
+                for p in args.PATH:
+                    logging.info("ADD to index: '%s'", p)
+                    _indexer.add(p)
 
         elif args.COMMAND == 'check-dups':
             with indexer(args.storage_dir) as _indexer:
@@ -726,13 +751,17 @@ def main():
 
         elif args.COMMAND == 'diff':
             if len(args.PATH) != 2:
-                print("please provide exactly 2 directories to compare")
+                raise parser.error(
+                    "please provide exactly 2 directories to compare")
             with indexer(args.storage_dir) as _indexer:
                 logging.info("DIFF directories '%s' and '%s'",
                              args.PATH[0], args.PATH[1])
                 _indexer.diff(args.PATH[0], args.PATH[1])
         else:
             pass
+
+    except KeyboardInterrupt:
+        print("aborted")
 
     except not_indexed_error as ex:
         print('file "%s" is not up to date - please re-index the '
